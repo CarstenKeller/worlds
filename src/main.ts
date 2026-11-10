@@ -200,6 +200,8 @@ function getRenderer(): THREE.WebGLRenderer {
   if (!renderer) {
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   }
   return renderer;
 }
@@ -300,8 +302,19 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   scene.fog = new THREE.Fog(sky, Math.max(150, p.r * 0.8), Math.max(900, p.r * 3.5));
   scene.add(new THREE.HemisphereLight('#dfeeff', '#4a5a3a', 1.6));
   const sun = new THREE.DirectionalLight('#fff4e0', 1.9);
-  sun.position.set(-0.5, 1, 0.35);
-  scene.add(sun);
+  // Sonne aus Südwesten, ca. 40° hoch; Schatten nur im Umkreis der Kamera (folgt mit)
+  const sunDir = new THREE.Vector3(-0.55, 0.85, 0.45).normalize();
+  const touchDevice = matchMedia('(pointer: coarse)').matches;
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(touchDevice ? 1024 : 2048, touchDevice ? 1024 : 2048);
+  const sc = sun.shadow.camera;
+  sc.left = sc.bottom = -60;
+  sc.right = sc.top = 60;
+  sc.near = 1;
+  sc.far = 600;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.04;
+  scene.add(sun, sun.target);
   scene.add(world.group);
   // Umland außerhalb der Welt: ebene Fläche im Nebel, damit der Rand nicht im Himmel endet
   const outer = new THREE.Mesh(
@@ -375,6 +388,11 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     walker.update(dt);
+    // Schattenausschnitt auf ganze Texel einrasten, sonst flimmern Schattenkanten beim Gehen
+    const texel = 120 / sun.shadow.mapSize.x;
+    const cx = Math.round(camera.position.x / texel) * texel, cz = Math.round(camera.position.z / texel) * texel;
+    sun.target.position.set(cx, camera.position.y, cz);
+    sun.position.copy(sun.target.position).addScaledVector(sunDir, 250);
     infoT += dt;
     if (infoT > 0.25) {
       infoT = 0;

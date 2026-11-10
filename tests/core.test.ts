@@ -144,3 +144,21 @@ describe('builders', () => {
     expect(roadStyle({ building: 'yes' })).toBeNull();
   });
 });
+
+import { guessRoof, minAreaRect } from '../src/builders';
+describe('Dachschätzung', () => {
+  it('kleinstes Rechteck eines gedrehten Rechtecks', () => {
+    const a = Math.PI / 6, c = Math.cos(a), s = Math.sin(a);
+    const R = ([x, z]: [number, number]): [number, number] => [x * c - z * s, x * s + z * c];
+    const ring = ([[0, 0], [10, 0], [10, 6], [0, 6]] as [number, number][]).map(R);
+    expect(minAreaRect(ring).area).toBeCloseTo(60, 3);
+  });
+  it('Satteldach nur für kleine, rechteckige Wohngebäude', () => {
+    const rect: [number, number][] = [[0, 0], [12, 0], [12, 9], [0, 9]];
+    expect(guessRoof({ building: 'house' }, rect, 7, 0.5)?.shape).toBe('gabled');
+    expect(guessRoof({ building: 'house', 'roof:shape': 'flat' }, rect, 7, 0.5)).toBeNull();
+    expect(guessRoof({ building: 'industrial' }, rect, 7, 0.5)).toBeNull();
+    const L: [number, number][] = [[0, 0], [12, 0], [12, 3], [3, 3], [3, 12], [0, 12]];
+    expect(guessRoof({ building: 'yes' }, L, 7, 0.5)).toBeNull();
+  });
+});

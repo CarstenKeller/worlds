@@ -3,6 +3,7 @@ import { LocalFrame, LatLon, chooseZoom, tileXToLon, tileYToLat } from './geo';
 import { HeightField, buildHeightField, loadElevation } from './terrain';
 import { OsmData, fetchOsm, parseOsm } from './osm';
 import { loadVectorOsm } from './vectortiles';
+import { addDetail, detailTexture, facadeTexture, makeRoofSampler } from './materials';
 import { ImagerySource, loadImage, pool, tileUrl } from './sources';
 import {
   buildBarriers, buildBuildings, buildLines, buildTrees, buildWater, carveWater, paintGround, placeTrees,
@@ -72,6 +73,8 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   // Gelände unter Seen ebnen, bevor Mesh und alles Andere darauf aufbauen
   const waters = carveWater(osm.areas, hf);
   // Bodenfarben aus OSM unter die Kacheln legen (füllt Lücken fehlender Kacheln)
+  // Dachfarben aus dem Luftbild, bevor die Bodenfarben die Lücken füllen
+  const roofColorAt = tex.zoom !== null ? makeRoofSampler(tex.canvas, half) : undefined;
   const gctx = tex.canvas.getContext('2d')!;
   gctx.globalCompositeOperation = 'destination-over';
   paintGround(gctx, tex.canvas.width, half, osm.areas);
@@ -87,7 +90,11 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   texture.anisotropy = 8;
   texture.generateMipmaps = true;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
-  const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshLambertMaterial({ map: texture }));
+  const detail = detailTexture();
+  const terrainMat = new THREE.MeshLambertMaterial({ map: texture });
+  addDetail(terrainMat, detail, 0.35, 0.45, 70);
+  const terrain = new THREE.Mesh(terrainGeo, terrainMat);
+  terrain.receiveShadow = true;
   terrain.name = 'terrain';
   group.add(terrain);
 
@@ -103,25 +110,38 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   const buildingsToDraw = osm.buildings.filter(
     (b) => !(b.tags.building && partCenters.some(([x, z]) => pointInPolygon(x, z, b.poly))) || b.tags['building:part'],
   );
-  const b = buildBuildings(buildingsToDraw, hf, o.radius, seed);
+  const b = buildBuildings(buildingsToDraw, hf, o.radius, seed, roofColorAt);
   // Kollision: Gesamtumrisse (auch die zerlegten)
   const footprints = b.footprints;
-  if (b.walls) group.add(new THREE.Mesh(b.walls, mat()));
-  if (b.roofs) group.add(new THREE.Mesh(b.roofs, mat()));
+  const solid = (g: THREE.BufferGeometry, m: THREE.Material) => {
+    const mesh = new THREE.Mesh(g, m);
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  };
+  if (b.walls) solid(b.walls, mat({ map: facadeTexture() }));
+  if (b.plainWalls) solid(b.plainWalls, mat());
+  if (b.roofs) solid(b.roofs, mat());
   await nextFrame();
 
   const lines = buildLines(osm.lines, hf, o.radius);
-  if (lines.geometry)
-    group.add(new THREE.Mesh(lines.geometry, mat({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
+  if (lines.geometry) {
+    const roadMat = mat({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    addDetail(roadMat, detail, 0.6, 0.55, 50);
+    const roads = new THREE.Mesh(lines.geometry, roadMat);
+    roads.receiveShadow = true;
+    group.add(roads);
+  }
   const water = buildWater(waters);
   if (water)
     group.add(new THREE.Mesh(water, new THREE.MeshLambertMaterial({ color: '#3f74a3', transparent: true, opacity: 0.88, side: THREE.DoubleSide })));
   const barriers = buildBarriers(osm.lines, hf, o.radius);
-  if (barriers) group.add(new THREE.Mesh(barriers, mat()));
+  if (barriers) solid(barriers, mat());
   await nextFrame();
 
   const trees = placeTrees(osm, o.radius, lines.segments, footprints, seed);
-  group.add(buildTrees(trees, hf, seed));
+  const treeGroup = buildTrees(trees, hf, seed);
+  treeGroup.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
+  group.add(treeGroup);
 
   let minH = Infinity, maxH = -Infinity;
   for (const h of hf.h) { if (h < minH) minH = h; if (h > maxH) maxH = h; }

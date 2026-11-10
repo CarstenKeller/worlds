@@ -37,6 +37,12 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
   Baumhöhen geschätzt. Keine Bäume auf Wegen und in Gebäuden.
 - A10 Seen: Gelände unter Wasserflächen wird auf den Wasserspiegel abgesenkt.
   Brücken/Tunnel: Tunnel werden weggelassen, Brücken liegen (noch) auf dem Gelände.
+- A11 Dächer ohne Angabe (fast immer bei OpenFreeMap): kleine Wohngebäude (≤ 400 m², ≤ 16 m,
+  Grundriss ≥ 80 % seines kleinsten Rechtecks) bekommen ein Satteldach (80 %) oder Walmdach (20 %),
+  Neigung ~40°; ohne Höhenangabe 2 Geschosse (unter 70 m² eines) plus Dach. Dachfarbe aus dem
+  Luftbild an der Gebäudemitte (grünliche Werte = Baumkrone -> Palette).
+- A12 Fassaden: Fensterraster 3 m × 1 Geschoss auf allen Wohn-/Nutzgebäuden; Garagen, Schuppen,
+  Scheunen u. Ä. ohne Fenster. Sonnenschatten im Umkreis von 60 m um die Kamera.
 - A4 Bäume: in Wald-/Gehölzflächen zufällig, aber reproduzierbar verteilt
   (fester Zufallsstartwert aus der Position); Laub-/Nadelbaum aus `leaf_type`.
 - A5 Kollision nur mit Gebäuden, nicht mit Bäumen/Zäunen.
@@ -60,6 +66,7 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
 - [x] Quellenangaben (Attribution) sichtbar
 - [x] OpenFreeMap als schnelle Quelle, Overpass mit 30-s-Budget (CI-Live-Test prüft OpenFreeMap)
 - [x] Minikarte (Draufsicht) einblendbar, Hinweise oben statt unten
+- [x] Realismus 1: geschätzte Dächer, Dachfarbe aus Luftbild, Fensterfassaden, Feinstruktur Boden/Straßen, Sonnenschatten
 - implementiert, nur mit Testdaten im Headless-Browser geprüft – **nicht** mit echten Overpass-/Bildkacheln (in der Entwicklungs-Sandbox gesperrt) und nicht auf echtem Gerät
 
 ### Phase 2 – Mehr Nähe zur Wirklichkeit (offen)

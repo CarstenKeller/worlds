@@ -15,6 +15,9 @@ describe('Live-Datenquellen', () => {
     const ms = Date.now() - t0;
     const heights = d.buildings.map((b) => Number(b.tags.height)).filter(Number.isFinite);
     const unknown = d.buildings.length - heights.length;
+    const hist: Record<string, number> = {};
+    for (const h of heights) hist[String(Math.round(h))] = (hist[String(Math.round(h))] ?? 0) + 1;
+    console.log('[live] Höhenverteilung (m: Anzahl):', JSON.stringify(Object.entries(hist).sort((a, b) => b[1] - a[1]).slice(0, 12)));
     console.log(`[live] OpenFreeMap: ${ms} ms, ${d.buildings.length} Gebäude, ${d.lines.length} Linien, ${d.areas.length} Flächen;`
       + ` Höhen min/max ${Math.min(...heights)}/${Math.max(...heights)}, ${unknown} ohne Höhe;`
       + ` Wegtypen ${[...new Set(d.lines.map((l) => l.tags.highway ?? l.tags.railway ?? l.tags.waterway))].join(',')};`

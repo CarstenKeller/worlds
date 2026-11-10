@@ -8,22 +8,26 @@ class MeshBuilder {
   pos: number[] = [];
   nor: number[] = [];
   col: number[] = [];
-  tri(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, color: THREE.Color, n?: THREE.Vector3) {
+  uv: number[] = [];
+  tri(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, color: THREE.Color, n?: THREE.Vector3, uvs?: [number, number][]) {
     const geo = new THREE.Vector3().subVectors(c, b).cross(new THREE.Vector3().subVectors(a, b)).normalize();
     const nn = n ?? geo;
     // Umlaufsinn an die gewünschte Normale anpassen: sonst gilt die Fläche als Rückseite
     // und three.js dreht die Normale bei DoubleSide um (Fläche wirkt dunkel).
-    const verts = n && geo.dot(n) < 0 ? [a, c, b] : [a, b, c];
-    for (const v of verts) {
+    const swap = !!n && geo.dot(n) < 0;
+    const verts = swap ? [a, c, b] : [a, b, c];
+    const tuv = uvs ? (swap ? [uvs[0], uvs[2], uvs[1]] : uvs) : null;
+    verts.forEach((v, i) => {
       this.pos.push(v.x, v.y, v.z);
       this.nor.push(nn.x, nn.y, nn.z);
       this.col.push(color.r, color.g, color.b);
-    }
+      this.uv.push(tuv ? tuv[i][0] : 0, tuv ? tuv[i][1] : 0);
+    });
   }
   /** Viereck a-b-c-d (gegen den Uhrzeigersinn von außen gesehen). */
-  quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: THREE.Color) {
-    this.tri(a, b, c, color);
-    this.tri(a, c, d, color);
+  quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: THREE.Color, uvs?: [number, number][]) {
+    this.tri(a, b, c, color, undefined, uvs && [uvs[0], uvs[1], uvs[2]]);
+    this.tri(a, c, d, color, undefined, uvs && [uvs[0], uvs[2], uvs[3]]);
   }
   get empty() {
     return this.pos.length === 0;
@@ -33,6 +37,7 @@ class MeshBuilder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.computeBoundingSphere();
     return g;
   }
@@ -87,13 +92,74 @@ function ccw(r: Ring): Ring {
   return signedArea(r) > 0 ? r.slice().reverse() : r;
 }
 
-export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: number, seed: number) {
-  const walls = new MeshBuilder();
+/** Fassaden-Raster: ein Fensterfeld ist so breit (m) und so hoch wie ein Stockwerk. */
+export const FACADE_MODULE = 3;
+const FLOOR_HEIGHT = 3;
+
+/** Gebäude ohne Fenster (Garagen, Schuppen, Scheunen, sehr niedrige Bauten). */
+function plainBuilding(tags: Record<string, string>, height: number): boolean {
+  const b = tags.building ?? tags['building:part'] ?? '';
+  return /^(garage|garages|shed|carport|hut|barn|cowshed|stable|silo|storage_tank|transformer_tower|greenhouse|roof|ruins|bunker)$/.test(b) || height < 3.2;
+}
+
+/** Konvexe Hülle (monotone chain). */
+export function convexHull(pts: Pt[]): Pt[] {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo: Pt[] = [], hi: Pt[] = [];
+  for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], q) <= 0) hi.pop(); hi.push(q); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));
+}
+
+/** Kleinstes umschließendes Rechteck (an einer Hüllkante ausgerichtet). */
+export function minAreaRect(ring: Ring): { rect: Ring; area: number } {
+  const h = convexHull(ring);
+  let best = { rect: ring, area: Infinity };
+  for (let i = 0; i < h.length; i++) {
+    const [x0, z0] = h[i], [x1, z1] = h[(i + 1) % h.length];
+    const L = Math.hypot(x1 - x0, z1 - z0) || 1;
+    const ux = (x1 - x0) / L, uz = (z1 - z0) / L;
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const [x, z] of h) {
+      const a = x * ux + z * uz, b = -x * uz + z * ux;
+      a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b);
+    }
+    const area = (a1 - a0) * (b1 - b0);
+    if (area < best.area) {
+      const P = (a: number, b: number): Pt => [a * ux - b * uz, a * uz + b * ux];
+      best = { rect: [P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], area };
+    }
+  }
+  return best;
+}
+
+/**
+ * Dachform, wenn die Daten keine angeben (Annahme A11 in plan.md): kleine Wohngebäude mit
+ * annähernd rechteckigem Grundriss bekommen ein Sattel- (80 %) oder Walmdach (20 %).
+ */
+export function guessRoof(tags: Record<string, string>, ring: Ring, height: number, r: number): { shape: 'gabled' | 'hipped'; rect: Ring } | null {
+  if (tags['roof:shape']) return null;
+  const b = tags.building ?? tags['building:part'] ?? 'yes';
+  if (!/^(yes|house|detached|semidetached_house|terrace|residential|farm|farm_auxiliary|bungalow|church|chapel|school|barn|garage)$/.test(b)) return null;
+  const area = Math.abs(signedArea(ring));
+  if (area < 15 || area > (b === 'church' || b === 'barn' ? 1500 : 400) || height > 16) return null;
+  const { rect, area: ra } = minAreaRect(ring);
+  if (area / ra < 0.8) return null; // L-förmig o. ä.: Flachdach statt falscher Firstlinie
+  return { shape: r < 0.2 ? 'hipped' : 'gabled', rect };
+}
+
+/** Dachfarbe aus dem Luftbild ablesen (leicht aufgehellt, Sättigung begrenzt). */
+export type ColorSampler = (x: number, z: number) => THREE.Color | null;
+
+export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: number, seed: number, roofColorAt?: ColorSampler) {
+  const facades = new MeshBuilder(); // Wände mit Fensterraster (Textur)
+  const plain = new MeshBuilder(); // Wände ohne Fenster
   const roofs = new MeshBuilder();
   const rand = rng(seed ^ 0xb11d);
   const footprints: Polygon[] = [];
   const up = V(0, 1, 0);
-  // Gebäude, die "building:part"-Teile haben, nicht doppelt zeichnen: Teile stehen im OSM-Datensatz zusätzlich.
   for (const f of list) {
     const { outer } = f.poly;
     const bb = ringBounds(outer);
@@ -108,24 +174,47 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
       gMin = Math.min(gMin, h);
       gMax = Math.max(gMax, h);
     }
-    const { height, minHeight, roofHeight } = estimateHeight(f.tags);
+    const est = estimateHeight(f.tags);
+    const { height, minHeight } = est;
+    let { roofHeight } = est;
     const isRoofOnly = f.tags.building === 'roof';
+    let shape = f.tags['roof:shape'];
+    let roofRing = outerR;
+    const guess = holes.length === 0 && !isRoofOnly ? guessRoof(f.tags, outerR, height, rand()) : null;
+    if (guess) {
+      shape = guess.shape;
+      roofRing = ccw(guess.rect);
+      const L = (i: number) => Math.hypot(roofRing[(i + 1) % 4][0] - roofRing[i][0], roofRing[(i + 1) % 4][1] - roofRing[i][1]);
+      const short = Math.min(L(0), L(1));
+      // Dachneigung ~40°, höchstens 45 % der Gebäudehöhe
+      roofHeight = Math.min(0.42 * short, height * 0.45);
+    }
     const base = isRoofOnly ? gMin + Math.max(minHeight, height - 0.5) : gMin + minHeight - (minHeight > 0 ? 0 : 1.0);
-    const eave = Math.max(gMin + height - roofHeight, gMax + 2.2);
+    // Ohne Höhenangabe: geschätztes Dach kommt auf die Wände (2 Geschosse, kleine Bauten 1)
+    const tagged = !!(f.tags.height || f.tags['building:levels']);
+    const wallH = guess && !tagged ? (Math.abs(signedArea(outerR)) > 70 ? 5.6 : 2.8) : height - roofHeight;
+    const eave = Math.max(gMin + wallH, gMax + 2.2);
     const wallCol = cssColor(f.tags['building:colour'], new THREE.Color(WALL_COLORS[Math.floor(rand() * WALL_COLORS.length)]));
-    const shape = f.tags['roof:shape'];
     const sloped = roofHeight > 0 && (shape === 'gabled' || shape === 'hipped' || shape === 'pyramidal');
-    const roofCol = cssColor(
+    const sampled = !f.tags['roof:colour'] && roofColorAt ? roofColorAt(cx, cz) : null;
+    const roofCol = sampled ?? cssColor(
       f.tags['roof:colour'],
       new THREE.Color((sloped ? ROOF_SLOPED : ROOF_FLAT)[Math.floor(rand() * (sloped ? ROOF_SLOPED.length : ROOF_FLAT.length))]),
     );
     if (!isRoofOnly && f.tags.building !== 'carport') footprints.push({ outer: outerR, holes });
+    const walls = plainBuilding(f.tags, height) ? plain : facades;
+    const ground = gMin; // Fensterraster beginnt am tiefsten Geländepunkt
 
     const wallRing = (ring: Ring, top: number) => {
       for (let i = 0; i < ring.length; i++) {
         const [x0, z0] = ring[i];
         const [x1, z1] = ring[(i + 1) % ring.length];
-        walls.quad(V(x0, base, z0), V(x1, base, z1), V(x1, top, z1), V(x0, top, z0), wallCol);
+        // Ganze Fensterfelder je Wandstück, damit an Ecken keine halben Fenster entstehen
+        const n = Math.max(1, Math.round(Math.hypot(x1 - x0, z1 - z0) / FACADE_MODULE));
+        // Raster leicht strecken, damit die Wand mit einem ganzen Stockwerk endet (keine halben Fenster an der Traufe)
+        const span = (top - ground) / FLOOR_HEIGHT, k = Math.max(1, Math.round(span)) / span;
+        const vb = ((base - ground) / FLOOR_HEIGHT) * k, vt = span * k;
+        walls.quad(V(x0, base, z0), V(x1, base, z1), V(x1, top, z1), V(x0, top, z0), wallCol, [[0, vb], [n, vb], [n, vt], [0, vt]]);
       }
     };
     if (isRoofOnly) {
@@ -137,8 +226,9 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
     wallRing(outerR, eave);
     for (const h of holes) wallRing(h, eave);
 
-    if (sloped && outerR.length === 4 && holes.length === 0 && shape !== 'pyramidal') {
-      gableRoof(walls, roofs, outerR, eave, roofHeight, shape === 'hipped', wallCol, roofCol);
+    if (sloped && roofRing.length === 4 && holes.length === 0 && shape !== 'pyramidal') {
+      if (guess) flatRoof(roofs, outerR, [], eave, roofCol, up); // deckt Abweichung Grundriss/Rechteck ab
+      gableRoof(walls, roofs, roofRing, eave, roofHeight, shape === 'hipped', wallCol, roofCol, ground);
     } else if (sloped && holes.length === 0 && shape === 'pyramidal') {
       const top = V(cx, eave + roofHeight, cz);
       for (let i = 0; i < outerR.length; i++) {
@@ -149,7 +239,8 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
       flatRoof(roofs, outerR, holes, eave, roofCol, up);
     }
   }
-  return { walls: walls.empty ? null : walls.build(), roofs: roofs.empty ? null : roofs.build(), footprints };
+  const g = (m: MeshBuilder) => (m.empty ? null : m.build());
+  return { walls: g(facades), plainWalls: g(plain), roofs: g(roofs), footprints };
 }
 
 function flatRoof(mb: MeshBuilder, outer: Ring, holes: Ring[], y: number, color: THREE.Color, n: THREE.Vector3) {
@@ -169,7 +260,7 @@ function flatRoof(mb: MeshBuilder, outer: Ring, holes: Ring[], y: number, color:
 
 function gableRoof(
   walls: MeshBuilder, roofs: MeshBuilder, r: Ring, eave: number, rh: number, hipped: boolean,
-  wallCol: THREE.Color, roofCol: THREE.Color,
+  wallCol: THREE.Color, roofCol: THREE.Color, ground = eave,
 ) {
   // Längere Seite = Traufseite; First parallel dazu.
   const len = (i: number) => Math.hypot(r[(i + 1) % 4][0] - r[i][0], r[(i + 1) % 4][1] - r[i][1]);
@@ -193,8 +284,15 @@ function gableRoof(
     roofs.tri(P(B, eave), P(C, eave), P(r2, yt), roofCol);
     roofs.tri(P(D, eave), P(A, eave), P(r1, yt), roofCol);
   } else {
-    walls.tri(P(B, eave), P(C, eave), P(r2, yt), wallCol);
-    walls.tri(P(D, eave), P(A, eave), P(r1, yt), wallCol);
+    // Giebeldreiecke mit Fensterraster (u entlang der Giebelseite, v in Stockwerken)
+    const gable = (p: Pt, q: Pt, top: Pt) => {
+      const n = Math.max(1, Math.round(Math.hypot(q[0] - p[0], q[1] - p[1]) / FACADE_MODULE));
+      // Giebel fensterlos: v in den leeren Streifen der Textur oberhalb der Fenster (0,86–0,98) legen
+      void ground;
+      walls.tri(P(p, eave), P(q, eave), P(top, yt), wallCol, undefined, [[0, 0.86], [n, 0.86], [n / 2, 0.98]]);
+    };
+    gable(B, C, r2);
+    gable(D, A, r1);
   }
 }
 
