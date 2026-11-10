@@ -18,7 +18,8 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
 | Was | Quelle | Lizenz / Hinweis |
 |---|---|---|
 | Gelände (Höhe) | AWS Terrain Tiles, Format Terrarium (Mapzen) | frei, Attribution; in DE meist EU-DEM ≈ 25 m Auflösung (gemessen: Kachel-Header `eudem`) |
-| Häuser, Wege, Wald, Wasser, Einzelbäume, Hecken, Zäune | OpenStreetMap über Overpass API | ODbL, Attribution „© OpenStreetMap-Mitwirkende“ |
+| Häuser, Wege, Wald, Wasser (schnell) | OpenStreetMap über OpenFreeMap-Vektorkacheln (OpenMapTiles-Schema) | ODbL; gemessen in CI 2026-11-10: 0,4 s für 4 Kacheln z14 |
+| zusätzlich Einzelbäume, Hecken, Zäune, Dachformen, Farben | OpenStreetMap über Overpass API, nur wenn binnen 30 s eine Antwort kommt | ODbL; öffentliche Server oft überlastet (Gerät: 504 nach ~10 min; CI: 406/429) |
 | Bodentextur | wählbar: Esri World Imagery (Satellit), OpenTopoMap (topografisch/Wander), OpenStreetMap, eigene XYZ-URL | Esri: kostenlos abrufbar, aber **keine offene Lizenz** – Nutzungsbedingungen von Esri gelten. OpenTopoMap CC-BY-SA, OSM ODbL |
 | Ortssuche | Nominatim (OSM) | Nutzungsrichtlinie: max. 1 Anfrage/s |
 
@@ -57,6 +58,8 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
 - [x] OSM: Gebäude (Wände + Dach), Straßen/Wege nach Typ, Gewässer, Bäume (Wald, Einzelbäume, Baumreihen), Gebüsch, Hecken/Zäune/Mauern
 - [x] Ich-Perspektive mit Bodenhaftung, Grenze, Gebäudekollision; Desktop- und Touchsteuerung
 - [x] Quellenangaben (Attribution) sichtbar
+- [x] OpenFreeMap als schnelle Quelle, Overpass mit 30-s-Budget (CI-Live-Test prüft OpenFreeMap)
+- [x] Minikarte (Draufsicht) einblendbar, Hinweise oben statt unten
 - implementiert, nur mit Testdaten im Headless-Browser geprüft – **nicht** mit echten Overpass-/Bildkacheln (in der Entwicklungs-Sandbox gesperrt) und nicht auf echtem Gerät
 
 ### Phase 2 – Mehr Nähe zur Wirklichkeit (offen)
