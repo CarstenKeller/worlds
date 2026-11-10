@@ -3,6 +3,7 @@ import { Polygon, Pt, Ring, joinRings, openRing, pointInRing, signedArea } from 
 
 export const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
@@ -30,49 +31,73 @@ export interface OsmData {
   points: PointFeature[]; // Einzelbäume
 }
 
-export function buildQuery(c: LatLon, r: number): string {
-  const a = `(around:${Math.round(r)},${c.lat.toFixed(6)},${c.lon.toFixed(6)})`;
-  return `[out:json][timeout:90];
+/** Rechteck (Grad) um die Mitte; Overpass filtert damit deutlich schneller als mit around. */
+export function queryBox(c: LatLon, r: number) {
+  const dLat = r / 111320;
+  const dLon = r / (111320 * Math.cos((c.lat * Math.PI) / 180));
+  return { s: c.lat - dLat, w: c.lon - dLon, n: c.lat + dLat, e: c.lon + dLon };
+}
+
+export function buildQuery(c: LatLon, r: number, serverTimeout = 50): string {
+  const b = queryBox(c, r);
+  const bbox = [b.s, b.w, b.n, b.e].map((v) => v.toFixed(6)).join(',');
+  // Globale [bbox:…] statt (around:…) je Zeile: gemessen 2026-11-10 war around auf einem
+  // öffentlichen Server schon für Gebäude allein > 80 s langsam.
+  return `[out:json][timeout:${serverTimeout}][bbox:${bbox}];
 (
-  way["building"]${a};
-  relation["building"]["type"="multipolygon"]${a};
-  way["building:part"]${a};
-  way["highway"]${a};
-  way["railway"~"^(rail|tram|light_rail|narrow_gauge|subway)$"]${a};
-  way["waterway"~"^(river|stream|canal|ditch|drain)$"]${a};
-  way["natural"~"^(water|wood|scrub|heath|grassland|tree_row|wetland|sand|beach|bare_rock|scree)$"]${a};
-  relation["natural"~"^(water|wood|scrub|heath|grassland|wetland)$"]${a};
-  way["landuse"~"^(forest|grass|meadow|orchard|vineyard|farmland|allotments|cemetery|village_green|recreation_ground|residential|industrial|commercial|retail)$"]${a};
-  relation["landuse"~"^(forest|grass|meadow|farmland)$"]${a};
-  way["leisure"~"^(park|garden|pitch|playground)$"]${a};
-  way["amenity"="parking"]${a};
-  way["barrier"~"^(hedge|wall|fence|retaining_wall|city_wall)$"]${a};
-  way["man_made"~"^(bridge|pier)$"]${a};
-  node["natural"="tree"]${a};
+  way["building"];
+  relation["building"]["type"="multipolygon"];
+  way["building:part"];
+  way["highway"];
+  way["railway"~"^(rail|tram|light_rail|narrow_gauge|subway)$"];
+  way["waterway"~"^(river|stream|canal|ditch|drain|riverbank)$"];
+  way["natural"~"^(water|wood|scrub|heath|grassland|tree_row|wetland|sand|beach|bare_rock|scree)$"];
+  relation["natural"~"^(water|wood|scrub|heath|grassland|wetland)$"];
+  way["landuse"~"^(forest|grass|meadow|orchard|vineyard|farmland|allotments|cemetery|village_green|recreation_ground|residential|industrial|commercial|retail|reservoir|basin)$"];
+  relation["landuse"~"^(forest|grass|meadow|farmland)$"];
+  way["leisure"~"^(park|garden|pitch|playground)$"];
+  way["amenity"="parking"];
+  way["barrier"~"^(hedge|wall|fence|retaining_wall|city_wall)$"];
+  way["man_made"~"^(bridge|pier)$"];
+  node["natural"="tree"];
 );
 out geom qt;`;
 }
 
-export async function fetchOsm(c: LatLon, r: number, signal?: AbortSignal): Promise<OsmElement[]> {
-  const body = 'data=' + encodeURIComponent(buildQuery(c, r));
-  let lastErr: unknown;
+/** Ein Endpunkt nach dem anderen, je mit eigenem Zeitlimit; Abbruch durch den Nutzer bricht alles ab. */
+export async function fetchOsm(
+  c: LatLon, r: number, signal?: AbortSignal, onTry?: (host: string) => void, perServerMs = 60000,
+): Promise<OsmElement[]> {
+  const body = 'data=' + encodeURIComponent(buildQuery(c, r, Math.round(perServerMs / 1000) - 5));
+  const errors: string[] = [];
   for (const url of OVERPASS_ENDPOINTS) {
+    const host = new URL(url).host;
+    onTry?.(host);
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), perServerMs);
+    const onAbort = () => ctl.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
       const res = await fetch(url, {
         method: 'POST',
         body,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal,
+        signal: ctl.signal,
       });
-      if (!res.ok) throw new Error(`Overpass ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      // Overpass meldet Zeitüberschreitung teils als 200 mit "remark"
+      if (json.remark && /timed out|out of memory/i.test(json.remark) && !json.elements?.length) throw new Error(json.remark);
       return json.elements as OsmElement[];
     } catch (e) {
-      if ((e as Error).name === 'AbortError') throw e;
-      lastErr = e;
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      errors.push(`${host}: ${ctl.signal.aborted ? 'Zeitlimit' : (e as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
-  throw lastErr ?? new Error('Overpass nicht erreichbar');
+  throw new Error(errors.join('; '));
 }
 
 function toLine(frame: LocalFrame, g: (OsmGeomPoint | null)[] | undefined): Pt[] {

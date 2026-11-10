@@ -94,10 +94,14 @@ describe('HeightField', () => {
 });
 
 describe('osm', () => {
-  it('Abfrage enthält Radius und Position', () => {
+  it('Abfrage nutzt ein Rechteck um die Position', () => {
     const q = buildQuery({ lat: 48.5, lon: 9.05 }, 300);
-    expect(q).toContain('(around:300,48.500000,9.050000)');
+    const m = /\[bbox:([-0-9.]+),([-0-9.]+),([-0-9.]+),([-0-9.]+)\]/.exec(q)!;
+    const [s, w, n, e] = m.slice(1).map(Number);
+    expect((n - s) * 111320).toBeCloseTo(600, 0);
+    expect((e - w) * 111320 * Math.cos((48.5 * Math.PI) / 180)).toBeCloseTo(600, 0);
     expect(q).toContain('out geom');
+    expect(q).not.toContain('around');
   });
   it('ordnet Elemente zu', () => {
     const f = new LocalFrame({ lat: 48.5, lon: 9.05 });

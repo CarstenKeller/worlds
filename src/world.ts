@@ -37,7 +37,14 @@ export interface World {
   dispose(): void;
 }
 
-export type Progress = (step: string, fraction: number) => void;
+export interface LoadState {
+  elevation: [number, number]; // geladen, gesamt
+  imagery: [number, number];
+  osmHost: string | null; // gerade angefragter Overpass-Server
+  osmDone: boolean;
+  building: boolean;
+}
+export type Progress = (s: LoadState) => void;
 
 /** Lädt alle Daten und baut die Szene. Schritte: Gelände, OSM, Bildkacheln, Aufbau. */
 export async function createWorld(o: WorldOptions, progress: Progress, signal?: AbortSignal): Promise<World> {
@@ -45,30 +52,33 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   const half = o.radius + 10;
   const seed = seedFrom(o.center.lat, o.center.lon);
 
-  progress('elevation', 0);
-  const elevP = loadElevation(frame, half, (d, t) => progress('elevation', d / t), signal);
-  // OSM parallel laden
+  // Alle drei Quellen gleichzeitig laden; Fortschritt je Quelle melden
+  const st: LoadState = { elevation: [0, 1], imagery: [0, 1], osmHost: null, osmDone: false, building: false };
+  const report = () => progress({ ...st });
+  report();
+  const elevP = loadElevation(frame, half, (d, t) => { st.elevation = [d, t]; report(); }, signal);
   let osmError: string | null = null;
-  const osmP: Promise<OsmData> = fetchOsm(o.center, o.radius * 1.05, signal)
+  const osmP: Promise<OsmData> = fetchOsm(o.center, o.radius * 1.05, signal, (h) => { st.osmHost = h; report(); })
     .then((els) => parseOsm(frame, els))
     .catch((e) => {
       if ((e as Error).name === 'AbortError') throw e;
       osmError = String((e as Error).message ?? e);
-      return { buildings: [], areas: [], lines: [], points: [] };
-    });
-  const elev = await elevP;
+      return { buildings: [], areas: [], lines: [], points: [] } as OsmData;
+    })
+    .finally(() => { st.osmDone = true; report(); });
+  const texP = loadImageryCanvas(frame, half, o, (d, t) => { st.imagery = [d, t]; report(); }, signal);
+  const [elev, osm, tex] = await Promise.all([elevP, osmP, texP]);
   const hf = buildHeightField(frame, half, elev.sample);
-  progress('osm', 0);
-  const osm = await osmP;
-  progress('osm', 1);
-
   // Gelände unter Seen ebnen, bevor Mesh und alles Andere darauf aufbauen
   const waters = carveWater(osm.areas, hf);
+  // Bodenfarben aus OSM unter die Kacheln legen (füllt Lücken fehlender Kacheln)
+  const gctx = tex.canvas.getContext('2d')!;
+  gctx.globalCompositeOperation = 'destination-over';
+  paintGround(gctx, tex.canvas.width, half, osm.areas);
+  gctx.globalCompositeOperation = 'source-over';
+  st.building = true;
+  report();
 
-  // Bodentextur
-  const tex = await buildGroundTexture(frame, half, o, osm, (f) => progress('imagery', f), signal);
-
-  progress('build', 0);
   await nextFrame();
   const group = new THREE.Group();
   const terrainGeo = hf.buildMesh(o.radius);
@@ -98,7 +108,6 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   const footprints = b.footprints;
   if (b.walls) group.add(new THREE.Mesh(b.walls, mat()));
   if (b.roofs) group.add(new THREE.Mesh(b.roofs, mat()));
-  progress('build', 0.3);
   await nextFrame();
 
   const lines = buildLines(osm.lines, hf, o.radius);
@@ -109,12 +118,10 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     group.add(new THREE.Mesh(water, new THREE.MeshLambertMaterial({ color: '#3f74a3', transparent: true, opacity: 0.88, side: THREE.DoubleSide })));
   const barriers = buildBarriers(osm.lines, hf, o.radius);
   if (barriers) group.add(new THREE.Mesh(barriers, mat()));
-  progress('build', 0.6);
   await nextFrame();
 
   const trees = placeTrees(osm, o.radius, lines.segments, footprints, seed);
   group.add(buildTrees(trees, hf, seed));
-  progress('build', 1);
 
   let minH = Infinity, maxH = -Infinity;
   for (const h of hf.h) { if (h < minH) minH = h; if (h > maxH) maxH = h; }
@@ -151,17 +158,14 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-async function buildGroundTexture(
-  frame: LocalFrame, half: number, o: WorldOptions, osm: OsmData, progress: (f: number) => void, signal?: AbortSignal,
+async function loadImageryCanvas(
+  frame: LocalFrame, half: number, o: WorldOptions, progress: (done: number, total: number) => void, signal?: AbortSignal,
 ): Promise<{ canvas: HTMLCanvasElement; zoom: number | null; failed: number }> {
   const template = o.imagery.id === 'custom' ? (o.customUrl ?? '') : o.imagery.url;
   const maxSize = Math.min(4096, o.maxTextureSize);
   if (!template) {
-    const size = Math.min(maxSize, 2048);
-    const canvas = makeCanvas(size);
-    paintGround(canvas.getContext('2d')!, size, half, osm.areas);
-    progress(1);
-    return { canvas, zoom: null, failed: 0 };
+    progress(1, 1);
+    return { canvas: makeCanvas(Math.min(maxSize, 2048)), zoom: null, failed: 0 };
   }
   const t = chooseZoom(frame.bbox(half), o.imagery.maxZoom, 16);
   // Auflösung der Kacheln (m/Pixel) bestimmt die Canvasgröße
@@ -169,11 +173,11 @@ async function buildGroundTexture(
   const size = Math.max(512, Math.min(maxSize, Math.ceil((2 * half) / mpp)));
   const canvas = makeCanvas(size);
   const ctx = canvas.getContext('2d')!;
-  paintGround(ctx, size, half, osm.areas);
   const s = size / (2 * half);
   const tiles: [number, number][] = [];
   for (let y = t.y0; y <= t.y1; y++) for (let x = t.x0; x <= t.x1; x++) tiles.push([x, y]);
   let done = 0, failed = 0;
+  progress(0, tiles.length);
   await pool(tiles, 8, async ([x, y]) => {
     try {
       const img = await loadImage(tileUrl(template, t.z, x, y, o.imagery.subdomains), signal);
@@ -186,7 +190,7 @@ async function buildGroundTexture(
       if ((e as Error).name === 'AbortError') throw e;
       failed++;
     }
-    progress(++done / tiles.length);
+    progress(++done, tiles.length);
   });
   return { canvas, zoom: t.z, failed };
 }

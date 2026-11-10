@@ -2,7 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { lang, t } from './i18n';
 import { ELEVATION_ATTRIBUTION, IMAGERY_SOURCES, OSM_ATTRIBUTION } from './sources';
-import { createWorld, World } from './world';
+import { createWorld, LoadState, World } from './world';
 import { Walker } from './controls';
 import { icon } from './icons';
 
@@ -218,32 +218,52 @@ async function start(p: Params, form: HTMLFormElement, setMsg: (t: string | null
   prog.hidden = false;
   setMsg(null);
   abort = new AbortController();
-  const steps: Record<string, [string, number, number]> = {
-    elevation: [t.stepElevation, 0, 0.25],
-    osm: [t.stepOsm, 0.25, 0.55],
-    imagery: [t.stepImagery, 0.55, 0.85],
-    build: [t.stepBuild, 0.85, 1],
+  // Abbrechen-Knopf während des Ladens
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'secondary';
+  cancel.textContent = t.cancel;
+  cancel.onclick = () => abort?.abort();
+  prog.appendChild(cancel);
+  const t0 = performance.now();
+  let last: LoadState | null = null;
+  const render = () => {
+    if (!last) return;
+    const s = last;
+    const sec = Math.round((performance.now() - t0) / 1000);
+    const osmLine = s.osmDone ? t.osmReady : t.osmWaiting(s.osmHost ?? '…');
+    stepEl.innerHTML = s.building
+      ? escapeAttr(t.stepBuild)
+      : [
+          `${t.stepElevation} ${s.elevation[0]}/${s.elevation[1]}`,
+          `${t.stepImagery} ${s.imagery[0]}/${s.imagery[1]}`,
+          osmLine,
+          `${sec} s`,
+        ].map(escapeAttr).join('<br>');
+    const f = s.building ? 1 : (s.elevation[0] / s.elevation[1] + s.imagery[0] / Math.max(1, s.imagery[1]) + (s.osmDone ? 1 : 0)) / 3;
+    bar.style.width = `${Math.min(1, f) * 100}%`;
   };
+  const tick = setInterval(render, 1000);
   const src = IMAGERY_SOURCES.find((s) => s.id === p.src) ?? IMAGERY_SOURCES[0];
   try {
     const world = await createWorld(
       { center: { lat: p.lat, lon: p.lon }, radius: p.r, imagery: src, customUrl: p.url, maxTextureSize: r.capabilities.maxTextureSize },
-      (step, frac) => {
-        const [label, a, b] = steps[step];
-        stepEl.textContent = label;
-        bar.style.width = `${(a + (b - a) * frac) * 100}%`;
-      },
+      (s) => { last = s; render(); },
       abort.signal,
     );
+    clearInterval(tick);
     const warnings: string[] = [];
     if (world.stats.osmError) warnings.push(t.osmFailed + ` (${world.stats.osmError})`);
     if (world.stats.failedImageryTiles) warnings.push(t.tilesFailed(world.stats.failedImageryTiles));
     if (world.stats.failedElevationTiles) warnings.push(t.elevFailed(world.stats.failedElevationTiles));
     showWorld(world, p, src.attribution || (p.src === 'custom' ? p.url.replace(/^https?:\/\/([^/]+).*/, '$1') : ''), warnings);
   } catch (e) {
+    clearInterval(tick);
+    cancel.remove();
     submit.disabled = false;
     prog.hidden = true;
-    setMsg(`${t.failed}: ${(e as Error).message ?? e}`);
+    if ((e as Error).name === 'AbortError') setMsg(t.cancelled, false);
+    else setMsg(`${t.failed}: ${(e as Error).message ?? e}`);
   }
 }
 
@@ -262,7 +282,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     <div class="center-msg edge-msg" data-edge hidden>${t.edge}</div>
     <div class="joy" hidden><div></div></div>
     <div class="hud-bottom">
-      ${warnings.map((w) => `<p class="warn">${escapeAttr(w)}</p>`).join('')}
+      ${warnings.map((w) => `<p class="warn">${escapeAttr(w)} <span aria-hidden="true">✕</span></p>`).join('')}
       <div class="hud-panel" data-helptext hidden></div>
       <div class="hud-panel attribution">${[ELEVATION_ATTRIBUTION, OSM_ATTRIBUTION, imageryAttribution].filter(Boolean).join(' · ')} · ${t.stats(world.stats.buildings, world.stats.trees)}</div>
     </div>
@@ -304,10 +324,9 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   helpText.textContent = touch ? t.helpTouch : t.helpDesktop;
   helpText.hidden = false; // beim Start einmal zeigen
   setTimeout(() => (helpText.hidden = true), 8000);
-  // Warnungen nach 12 s ausblenden (oder per Antippen), damit sie die Sicht nicht verdecken
+  // Warnungen bleiben stehen, bis man sie antippt (vorher nach 12 s weg – wurden übersehen)
   const warns = Array.from(view.querySelectorAll('.hud-bottom .warn')) as HTMLElement[];
-  warns.forEach((w) => { w.style.pointerEvents = 'auto'; w.onclick = () => w.remove(); });
-  setTimeout(() => warns.forEach((w) => w.remove()), 12000);
+  warns.forEach((w) => { w.style.pointerEvents = 'auto'; w.title = t.tapToClose; w.onclick = () => w.remove(); });
   look.hidden = touch;
   const helpBtn = view.querySelector('[data-act=help]') as HTMLButtonElement;
   helpBtn.onclick = () => {
