@@ -321,16 +321,18 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   scene.fog = new THREE.Fog(skyObj.horizon, Math.max(150, p.r * 0.8), Math.max(900, p.r * 3.5));
   const s = Math.sin((elev * Math.PI) / 180);
   const dayK = Math.max(0, Math.min(1, sp.elevation / 10)); // 0 = Dämmerung, 1 = Tag
-  scene.add(new THREE.HemisphereLight('#dfeeff', '#4a5a3a', 0.35 + 1.15 * dayK));
-  const sun = new THREE.DirectionalLight(new THREE.Color().lerpColors(new THREE.Color('#ffb070'), new THREE.Color('#fff4e0'), Math.min(1, s * 2.5)), 0.4 + 2.0 * Math.min(1, s * 1.6) * dayK);
+  // Verhältnis Himmel- zu Sonnenlicht ~1:5 – vorher war der Himmel so hell, dass Schatten kaum auffielen
+  scene.add(new THREE.HemisphereLight('#dfeeff', '#4a5a3a', 0.45 + 0.4 * dayK));
+  const sun = new THREE.DirectionalLight(new THREE.Color().lerpColors(new THREE.Color('#ffb070'), new THREE.Color('#fff4e0'), Math.min(1, s * 2.5)), 0.3 + 2.9 * Math.min(1, 0.45 + s) * dayK);
   const touchDevice = matchMedia('(pointer: coarse)').matches;
   sun.castShadow = true;
   sun.shadow.mapSize.set(touchDevice ? 1024 : 2048, touchDevice ? 1024 : 2048);
   const sc = sun.shadow.camera;
-  sc.left = sc.bottom = -60;
-  sc.right = sc.top = 60;
+  sc.left = sc.bottom = -80;
+  sc.right = sc.top = 80;
   sc.near = 1;
   sc.far = 600;
+  sc.updateProjectionMatrix(); // ohne das bleibt der Standardausschnitt von ±5 m (Schatten praktisch unsichtbar)
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
   scene.add(sun, sun.target);
@@ -424,8 +426,9 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     walker.update(dt);
+    world.update(camera.position.x, camera.position.z);
     // Schattenausschnitt auf ganze Texel einrasten, sonst flimmern Schattenkanten beim Gehen
-    const texel = 120 / sun.shadow.mapSize.x;
+    const texel = 160 / sun.shadow.mapSize.x;
     const cx = Math.round(camera.position.x / texel) * texel, cz = Math.round(camera.position.z / texel) * texel;
     sun.target.position.set(cx, camera.position.y, cz);
     sun.position.copy(sun.target.position).addScaledVector(sunDir, 250);
@@ -456,7 +459,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     showSetup();
   };
   // Für automatische Tests/Fehlersuche erreichbar
-  (window as unknown as { __worlds: unknown }).__worlds = { world, walker, camera, scene };
+  (window as unknown as { __worlds: unknown }).__worlds = { world, walker, camera, scene, renderer: r };
 }
 
 /** Grundbild der Minikarte: Bodentextur verkleinert, Gebäude dunkel, Kreis als Weltgrenze. */

@@ -48,6 +48,9 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
   Mülltonnen bei ~60 % der Wohnhäuser (1–3, Farben grau/braun/blau/gelb), Autos parken mit ~45 %
   Wahrscheinlichkeit je Seite alle ≥ 5,5 m an Wohn-/Nebenstraßen, Parkplätze halb belegt,
   Laternen alle ~30 m wechselseitig an Wohn- und Hauptstraßen – alles erfunden (Fantasie).
+- A14 Vorgärten: Grundstücksgrenze 1,6 m hinter dem Fahrbahnrand (Gehweg), Einfriedung über Hausbreite + 3 m
+  je Seite; Hecke 35 %, Lattenzaun 35 %, Mäuerchen 15 %, keine 15 %; Einfahrt bei 45 %, davon 55 % mit Auto.
+  Gras nur, wo die Bodentextur grün ist – unter Baumkronen im Luftbild also auch dort.
 - A4 Bäume: in Wald-/Gehölzflächen zufällig, aber reproduzierbar verteilt
   (fester Zufallsstartwert aus der Position); Laub-/Nadelbaum aus `leaf_type`.
 - A5 Kollision mit Gebäuden und Baumstämmen (seit 2026-11-10 auf Wunsch); Büsche, Hecken, Zäune bleiben durchlässig.
@@ -80,6 +83,12 @@ unbedenklichen Quellen; darüber erfundene Details für Immersion; Umschalter Ec
 Herkunft je Element: Daten / Schätzung / Fantasie.
 - [x] Sonnenstand aus Datum (heute), Uhrzeit (Standard 14:00, Gerätezeitzone) und Ort; Himmel mit Sonne, Schatten danach
 - [x] Türen zur nächsten Straße (Schätzung), Mülltonnen, geparkte Autos, Laternen (Fantasie, mit Kollision nur in Ansicht Fantasie)
+- [x] Schatten repariert (Schattenkamera-Projektion fehlte; Himmelslicht zu stark)
+- [x] Fassadentypen modern/klassisch mit Klappläden/Klinker, Sockel, Dachüberstand, Dachziegel
+- [x] Autos mit Profil, Glashaus, Felgen, Lichtern; Türen mit Füllungen, Rahmen, Stufe; Tonnen mit Rippen
+- [x] Vorgärten (Fantasie): Gartenweg Tür→Straße, Hecke/Lattenzaun/Mäuerchen an der Straße, Einfahrt teils mit Auto
+- [x] Gras (Fantasie) im Umkreis von 28 m auf grünen Flächen (Luftbild/Bodenfarbe)
+- [ ] Geräusche (auf später verschoben, Nutzerwunsch 2026-11-10)
 - [x] Umschalter „Echt“ (nur Daten, Schätzungen orange) ↔ „Fantasie“ (mit Fenstern, Bodenstruktur)
 
 ### Phase 2 – Mehr Nähe zur Wirklichkeit (offen)

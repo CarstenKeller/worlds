@@ -3,8 +3,8 @@ import { LocalFrame, LatLon, chooseZoom, tileXToLon, tileYToLat } from './geo';
 import { HeightField, buildHeightField, loadElevation } from './terrain';
 import { OsmData, fetchOsm, parseOsm } from './osm';
 import { loadVectorOsm } from './vectortiles';
-import { buildCarsAndLamps, buildDoorsAndBins } from './details';
-import { addDetail, detailTexture, facadeTexture, makeRoofSampler } from './materials';
+import { Grass, buildCarsAndLamps, buildDoorsAndBins } from './details';
+import { addDetail, detailTexture, facadeTextures, grassTexture, makeRoofSampler, roofTexture } from './materials';
 import { ImagerySource, loadImage, pool, tileUrl } from './sources';
 import {
   buildBarriers, buildBuildings, buildLines, buildTrees, buildWater, carveWater, paintGround, placeTrees,
@@ -47,6 +47,8 @@ export interface World {
   fantasyPosts: { x: number; z: number; r: number }[];
   /** Ansicht umschalten (A-01): "fantasy" = alles, "real" = ohne Erfundenes, Schätzungen orange */
   setMode(mode: ViewMode): void;
+  /** Pro Bild aufrufen: nachführen, was der Kamera folgt (Gras) */
+  update(x: number, z: number): void;
   /** Bodentextur (Draufsicht) für die Minikarte; deckt [-half, half]² ab */
   groundCanvas: HTMLCanvasElement;
   half: number;
@@ -131,21 +133,26 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   };
   // Ebenen (A-01): geschätzte Teile merken (Ansicht "Echt" färbt sie), Fantasie-Materialien merken
   const estMats: THREE.MeshLambertMaterial[] = [];
-  const facadeMats: THREE.MeshLambertMaterial[] = [];
-  const facadeTex = facadeTexture();
-  const add = (g: THREE.BufferGeometry | null, est: boolean, facade: boolean) => {
+  // Texturen gelten als Fantasie (A-01): in Ansicht "Echt" werden sie abgenommen
+  const texMats: { m: THREE.MeshLambertMaterial; tex: THREE.Texture }[] = [];
+  const facadeTex = facadeTextures();
+  const tiles = roofTexture();
+  const add = (g: THREE.BufferGeometry | null, est: boolean, tex?: THREE.Texture) => {
     if (!g) return;
-    const m = mat(facade ? { map: facadeTex } : {});
+    const m = mat(tex ? { map: tex } : {});
     if (est) estMats.push(m);
-    if (facade) facadeMats.push(m);
+    if (tex) texMats.push({ m, tex });
     solid(g, m);
   };
-  add(b.walls.known, false, true);
-  add(b.walls.est, true, true);
-  add(b.plainWalls.known, false, false);
-  add(b.plainWalls.est, true, false);
-  add(b.roofs.known, false, false);
-  add(b.roofs.est, true, false);
+  b.walls.forEach((w, i) => { add(w.known, false, facadeTex[i]); add(w.est, true, facadeTex[i]); });
+  add(b.plainWalls.known, false);
+  add(b.plainWalls.est, true);
+  add(b.plinths.known, false);
+  add(b.plinths.est, true);
+  add(b.roofs.known, false, tiles);
+  add(b.roofs.est, true, tiles);
+  add(b.flatRoofs.known, false);
+  add(b.flatRoofs.est, true);
   await nextFrame();
 
   const lines = buildLines(osm.lines, hf, o.radius);
@@ -174,21 +181,24 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     group.add(tg);
   }
   // Türen (Schätzung: es gibt sie, ihr Ort ist abgeleitet) – zur nächsten Straße hin
-  const dd = buildDoorsAndBins(b.entrances, lines.segments, hf, o.radius, seed);
+  const dd = buildDoorsAndBins(b.entrances, lines.segments, hf, o.radius, seed, footprints);
   group.add(dd.doors);
-  estMats.push(dd.doors.material as THREE.MeshLambertMaterial);
+  dd.doors.traverse((o) => { const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined; if (m) estMats.push(m); });
   // Fantasie: Autos, Laternen, Mülltonnen
   const fantasyGroup = new THREE.Group();
   fantasyGroup.name = 'fantasy';
-  const cl = buildCarsAndLamps(osm.lines, osm.areas, footprints, hf, o.radius, seed);
-  fantasyGroup.add(cl.group, dd.bins);
+  const cl = buildCarsAndLamps(osm.lines, osm.areas, footprints, hf, o.radius, seed, dd.drivewayCars);
+  fantasyGroup.add(cl.group, dd.bins, dd.yard);
+  // Gras nahe der Kamera auf grünen Flächen (Luftbild bzw. Bodenfarbe)
+  const grass = new Grass(tex.canvas, half, hf, lines.segments, footprints, grassTexture());
+  fantasyGroup.add(grass.mesh);
   group.add(fantasyGroup);
   const fantasyPosts = [...cl.posts, ...dd.binPosts];
   const baseColors = estMats.map((m) => m.color.clone());
   const ESTIMATE_TINT = new THREE.Color('#ff8a3d');
   const setMode = (mode: ViewMode) => {
     const fantasy = mode === 'fantasy';
-    for (const m of facadeMats) { m.map = fantasy ? facadeTex : null; m.needsUpdate = true; }
+    for (const { m, tex } of texMats) { m.map = fantasy ? tex : null; m.needsUpdate = true; }
     for (const d of detailSwitches) d.value = fantasy ? 1 : 0;
     fantasyGroup.visible = fantasy;
     // Leuchtendes Orange über Eigenleuchten, damit es auch auf dunklen Flächen deutlich ist
@@ -211,6 +221,7 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     fantasyPosts,
     groundCanvas: tex.canvas,
     setMode,
+    update: (x: number, z: number) => grass.update(x, z, o.radius),
     half,
     stats: {
       buildings: buildingsToDraw.length,
