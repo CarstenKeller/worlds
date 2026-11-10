@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm test
       # Echte Datenquellen prüfen/messen (aus der Entwicklungs-Sandbox nicht erreichbar)
+      - run: sudo apt-get install -y -qq poppler-utils >/dev/null
+        continue-on-error: true
       - run: npm run test:live
         continue-on-error: true
       - run: npm run build

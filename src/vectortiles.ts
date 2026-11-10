@@ -105,7 +105,10 @@ export function decodeTile(buf: ArrayBuffer | Uint8Array, x: number, y: number, 
         if (props.hide_3d) continue; // Umriss, dessen Teile (building:part) separat kommen
         tags = { building: 'yes' };
         // render_height 0 (gemessen 2026-11-10) bzw. sehr klein = unbekannt -> wie bei OSM schätzen
-        if (Number(props.render_height) >= 2.5) tags.height = String(props.render_height);
+        // Gemessen 2026-11-10 (CI, Tübingen): ~50 % aller Gebäude haben genau 5 m -> offenbar Standardwert
+        // des Schemas, wenn nichts bekannt ist. Daher 5 m (und < 2,5 m) als unbekannt werten -> Schätzung.
+        const rh = Number(props.render_height);
+        if (rh >= 2.5 && rh !== 5) tags.height = String(props.render_height);
         if (props.render_min_height) tags.min_height = String(props.render_min_height);
       } else tags = areaTags(name, props);
       if (!tags) continue;
