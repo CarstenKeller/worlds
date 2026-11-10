@@ -104,7 +104,8 @@ export function decodeTile(buf: ArrayBuffer | Uint8Array, x: number, y: number, 
       if (name === 'building') {
         if (props.hide_3d) continue; // Umriss, dessen Teile (building:part) separat kommen
         tags = { building: 'yes' };
-        if (props.render_height !== undefined) tags.height = String(props.render_height);
+        // render_height 0 (gemessen 2026-11-10) bzw. sehr klein = unbekannt -> wie bei OSM schätzen
+        if (Number(props.render_height) >= 2.5) tags.height = String(props.render_height);
         if (props.render_min_height) tags.min_height = String(props.render_min_height);
       } else tags = areaTags(name, props);
       if (!tags) continue;

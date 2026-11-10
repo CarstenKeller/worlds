@@ -14,8 +14,9 @@ describe('Live-Datenquellen', () => {
     const d = await loadVectorOsm(C, R);
     const ms = Date.now() - t0;
     const heights = d.buildings.map((b) => Number(b.tags.height)).filter(Number.isFinite);
+    const unknown = d.buildings.length - heights.length;
     console.log(`[live] OpenFreeMap: ${ms} ms, ${d.buildings.length} Gebäude, ${d.lines.length} Linien, ${d.areas.length} Flächen;`
-      + ` Höhen min/max ${Math.min(...heights)}/${Math.max(...heights)};`
+      + ` Höhen min/max ${Math.min(...heights)}/${Math.max(...heights)}, ${unknown} ohne Höhe;`
       + ` Wegtypen ${[...new Set(d.lines.map((l) => l.tags.highway ?? l.tags.railway ?? l.tags.waterway))].join(',')};`
       + ` Flächentypen ${[...new Set(d.areas.map((a) => Object.entries(a.tags).map((e) => e.join('=')).join('+')))].join(',')}`);
     expect(d.buildings.length).toBeGreaterThan(50);
