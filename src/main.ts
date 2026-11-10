@@ -6,6 +6,7 @@ import { VT_ATTRIBUTION } from './vectortiles';
 import { createWorld, LoadState, ViewMode, World } from './world';
 import { Walker } from './controls';
 import { icon } from './icons';
+import { createSky, sunDirection, sunPosition } from './details';
 
 document.documentElement.lang = lang;
 const app = document.getElementById('app')!;
@@ -58,7 +59,7 @@ function themeButton(extraClass = ''): HTMLElement {
 }
 
 // ---------------------------------------------------------------- Zustand / URL
-interface Params { lat: number; lon: number; r: number; src: string; url: string; eye: number }
+interface Params { lat: number; lon: number; r: number; src: string; url: string; eye: number; time: string }
 function readParams(): Params {
   const h = new URLSearchParams(location.hash.slice(1));
   const num = (k: string, d: number) => (h.has(k) && Number.isFinite(parseFloat(h.get(k)!)) ? parseFloat(h.get(k)!) : d);
@@ -70,13 +71,16 @@ function readParams(): Params {
     src: h.get('src') ?? saved('src', 'esri'),
     url: saved('url', ''),
     eye: num('eye', parseFloat(saved('eye', '1.5'))),
+    // Tageszeit (Gerätezeitzone, heutiges Datum); Standard 14:00 (Nutzervorgabe)
+    time: /^\d{2}:\d{2}$/.test(h.get('t') ?? '') ? h.get('t')! : saved('time', '14:00'),
   };
 }
 function writeParams(p: Params) {
   const h = new URLSearchParams({ lat: p.lat.toFixed(6), lon: p.lon.toFixed(6), r: String(p.r), src: p.src });
   if (p.eye !== 1.5) h.set('eye', String(p.eye));
+  if (p.time !== '14:00') h.set('t', p.time);
   history.replaceState(null, '', '#' + h.toString());
-  for (const k of ['lat', 'lon', 'r', 'src', 'url', 'eye'] as const) store.set(k, String(p[k]));
+  for (const k of ['lat', 'lon', 'r', 'src', 'url', 'eye', 'time'] as const) store.set(k, String(p[k]));
 }
 
 // ---------------------------------------------------------------- Auswahl-Bildschirm
@@ -110,7 +114,10 @@ function showSetup(message?: { text: string; error?: boolean }) {
         <select name="src">${IMAGERY_SOURCES.map((s) => `<option value="${s.id}" ${s.id === p.src ? 'selected' : ''}>${s.label[lang]}</option>`).join('')}</select>
       </label>
       <label data-custom ${p.src === 'custom' ? '' : 'hidden'}>${t.customUrl}<input name="url" type="url" value="${escapeAttr(p.url)}" placeholder="https://…/{z}/{x}/{y}.png"></label>
-      <label>${t.eyeHeight}<input name="eye" type="number" min="0.3" max="50" step="0.1" value="${p.eye}" inputmode="decimal"></label>
+      <div class="row">
+        <label>${t.eyeHeight}<input name="eye" type="number" min="0.3" max="50" step="0.1" value="${p.eye}" inputmode="decimal"></label>
+        <label>${t.timeOfDay}<input name="time" type="time" value="${p.time}" step="900"></label>
+      </div>
       <p class="msg ${message?.error ? 'error' : 'warn'}" ${message ? '' : 'hidden'}></p>
       <div class="progress" hidden><span class="step"></span><div class="bar"><div></div></div></div>
       <button class="primary" type="submit">${icon('globe')}<span>${t.create}</span></button>
@@ -184,7 +191,8 @@ function showSetup(message?: { text: string; error?: boolean }) {
     const r = Math.min(2000, Math.max(50, Math.round(parseFloat(f('r').value) || 300)));
     const eye = Math.min(50, Math.max(0.3, parseFloat(f('eye').value.replace(',', '.')) || 1.5));
     if (!(Math.abs(lat) <= 85 && Math.abs(lon) <= 180)) return setMsg(t.invalidCoords);
-    const params: Params = { lat, lon, r, src: f('src').value, url: f('url').value.trim(), eye };
+    const time = /^\d{2}:\d{2}/.test(f('time').value) ? f('time').value.slice(0, 5) : '14:00';
+    const params: Params = { lat, lon, r, src: f('src').value, url: f('url').value.trim(), eye, time };
     writeParams(params);
     await start(params, form, setMsg);
   });
@@ -201,7 +209,7 @@ function getRenderer(): THREE.WebGLRenderer {
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
   }
   return renderer;
 }
@@ -299,13 +307,22 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   view.querySelector('.hud-top')!.insertBefore(themeButton(), view.querySelector('[data-act=help]'));
 
   const scene = new THREE.Scene();
-  const sky = new THREE.Color('#a9c8e8');
-  scene.background = sky;
-  scene.fog = new THREE.Fog(sky, Math.max(150, p.r * 0.8), Math.max(900, p.r * 3.5));
-  scene.add(new THREE.HemisphereLight('#dfeeff', '#4a5a3a', 1.6));
-  const sun = new THREE.DirectionalLight('#fff4e0', 1.9);
-  // Sonne aus Südwesten, ca. 40° hoch; Schatten nur im Umkreis der Kamera (folgt mit)
-  const sunDir = new THREE.Vector3(-0.55, 0.85, 0.45).normalize();
+  // Sonnenstand für heute zur gewählten Uhrzeit am Ort (Uhrzeit in der Zeitzone des Geräts)
+  const [hh, mm] = p.time.split(':').map(Number);
+  const when = new Date();
+  when.setHours(hh, mm, 0, 0);
+  const sp = sunPosition(when, p.lat, p.lon);
+  const elev = Math.max(sp.elevation, 3); // nachts nicht unter den Horizont: Dämmerlicht statt Schwarz
+  const sunDir = sunDirection(sp.azimuth, elev);
+  const camFar = Math.max(2500, p.r * 5);
+  const skyObj = createSky(camFar * 0.9, sunDir, sp.elevation);
+  scene.add(skyObj.mesh);
+  scene.background = skyObj.horizon;
+  scene.fog = new THREE.Fog(skyObj.horizon, Math.max(150, p.r * 0.8), Math.max(900, p.r * 3.5));
+  const s = Math.sin((elev * Math.PI) / 180);
+  const dayK = Math.max(0, Math.min(1, sp.elevation / 10)); // 0 = Dämmerung, 1 = Tag
+  scene.add(new THREE.HemisphereLight('#dfeeff', '#4a5a3a', 0.35 + 1.15 * dayK));
+  const sun = new THREE.DirectionalLight(new THREE.Color().lerpColors(new THREE.Color('#ffb070'), new THREE.Color('#fff4e0'), Math.min(1, s * 2.5)), 0.4 + 2.0 * Math.min(1, s * 1.6) * dayK);
   const touchDevice = matchMedia('(pointer: coarse)').matches;
   sun.castShadow = true;
   sun.shadow.mapSize.set(touchDevice ? 1024 : 2048, touchDevice ? 1024 : 2048);
@@ -326,7 +343,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   outer.position.y = world.stats.minHeight - 1;
   scene.add(outer);
 
-  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, Math.max(2500, p.r * 5));
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, camFar);
   const walker = new Walker(camera, r.domElement, (x, z) => world.heightField.height(x, z), p.r, world.footprints, world.trunks);
   walker.eyeHeight = p.eye;
   const [sx, sz] = walker.findStart();
@@ -362,6 +379,8 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   const legend = view.querySelector('[data-legend]') as HTMLElement;
   const setView = (mode: ViewMode) => {
     world.setMode(mode);
+    // Fantasie-Objekte (Autos, Laternen, Tonnen) sind nur dort Hindernisse, wo sie sichtbar sind
+    walker.setPosts(mode === 'real' ? world.trunks : [...world.trunks, ...world.fantasyPosts]);
     const real = mode === 'real';
     layerBtn.setAttribute('aria-pressed', String(real));
     // Tooltip nennt, wohin der Knopf umschaltet
@@ -410,6 +429,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     const cx = Math.round(camera.position.x / texel) * texel, cz = Math.round(camera.position.z / texel) * texel;
     sun.target.position.set(cx, camera.position.y, cz);
     sun.position.copy(sun.target.position).addScaledVector(sunDir, 250);
+    skyObj.mesh.position.copy(camera.position);
     infoT += dt;
     if (infoT > 0.25) {
       infoT = 0;

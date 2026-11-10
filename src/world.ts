@@ -3,6 +3,7 @@ import { LocalFrame, LatLon, chooseZoom, tileXToLon, tileYToLat } from './geo';
 import { HeightField, buildHeightField, loadElevation } from './terrain';
 import { OsmData, fetchOsm, parseOsm } from './osm';
 import { loadVectorOsm } from './vectortiles';
+import { buildCarsAndLamps, buildDoorsAndBins } from './details';
 import { addDetail, detailTexture, facadeTexture, makeRoofSampler } from './materials';
 import { ImagerySource, loadImage, pool, tileUrl } from './sources';
 import {
@@ -23,6 +24,8 @@ export interface WorldOptions {
 export interface WorldStats {
   buildings: number;
   trees: number;
+  cars: number;
+  lamps: number;
   lines: number;
   elevationZoom: number;
   imageryZoom: number | null;
@@ -40,6 +43,8 @@ export interface World {
   footprints: Polygon[];
   /** Baumstämme für die Kollision */
   trunks: { x: number; z: number; r: number }[];
+  /** Hindernisse der Fantasie-Ebene (Autos, Laternen, Tonnen) – nur in Ansicht Fantasie */
+  fantasyPosts: { x: number; z: number; r: number }[];
   /** Ansicht umschalten (A-01): "fantasy" = alles, "real" = ohne Erfundenes, Schätzungen orange */
   setMode(mode: ViewMode): void;
   /** Bodentextur (Draufsicht) für die Minikarte; deckt [-half, half]² ab */
@@ -168,12 +173,24 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     });
     group.add(tg);
   }
+  // Türen (Schätzung: es gibt sie, ihr Ort ist abgeleitet) – zur nächsten Straße hin
+  const dd = buildDoorsAndBins(b.entrances, lines.segments, hf, o.radius, seed);
+  group.add(dd.doors);
+  estMats.push(dd.doors.material as THREE.MeshLambertMaterial);
+  // Fantasie: Autos, Laternen, Mülltonnen
+  const fantasyGroup = new THREE.Group();
+  fantasyGroup.name = 'fantasy';
+  const cl = buildCarsAndLamps(osm.lines, osm.areas, footprints, hf, o.radius, seed);
+  fantasyGroup.add(cl.group, dd.bins);
+  group.add(fantasyGroup);
+  const fantasyPosts = [...cl.posts, ...dd.binPosts];
   const baseColors = estMats.map((m) => m.color.clone());
   const ESTIMATE_TINT = new THREE.Color('#ff8a3d');
   const setMode = (mode: ViewMode) => {
     const fantasy = mode === 'fantasy';
     for (const m of facadeMats) { m.map = fantasy ? facadeTex : null; m.needsUpdate = true; }
     for (const d of detailSwitches) d.value = fantasy ? 1 : 0;
+    fantasyGroup.visible = fantasy;
     // Leuchtendes Orange über Eigenleuchten, damit es auch auf dunklen Flächen deutlich ist
     estMats.forEach((m, i) => {
       m.color.copy(baseColors[i]);
@@ -191,12 +208,15 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     footprints,
     // Stammradius wie in buildTrees (0,2 m × Höhe/12) plus ~0,3 m Körperbreite; Büsche bleiben begehbar
     trunks: trees.filter((t) => !t.bush).map((t) => ({ x: t.x, z: t.z, r: 0.2 * (t.h / 12) + 0.3 })),
+    fantasyPosts,
     groundCanvas: tex.canvas,
     setMode,
     half,
     stats: {
       buildings: buildingsToDraw.length,
       trees: trees.length,
+      cars: cl.cars,
+      lamps: cl.lamps,
       lines: osm.lines.length,
       elevationZoom: elev.zoom,
       imageryZoom: tex.zoom,

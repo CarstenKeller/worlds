@@ -161,6 +161,8 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
   const roofsB = mk();
   const rand = rng(seed ^ 0xb11d);
   const footprints: Polygon[] = [];
+  /** Gebäude mit Fassade (Wohn-/Nutzbau) für Türen und Mülltonnen */
+  const entrances: { ring: Ring; area: number; residential: boolean }[] = [];
   const up = V(0, 1, 0);
   for (const f of list) {
     const { outer } = f.poly;
@@ -206,7 +208,11 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
     if (!isRoofOnly && f.tags.building !== 'carport') footprints.push({ outer: outerR, holes });
     const heightKnown = !!(f.tags.height || f.tags['building:levels']);
     const roofKnown = !!f.tags['roof:shape'] || isRoofOnly;
-    const walls = (plainBuilding(f.tags, height) ? plainB : facadesB)[heightKnown ? 'known' : 'est'];
+    const plainB_ = plainBuilding(f.tags, height);
+    const walls = (plainB_ ? plainB : facadesB)[heightKnown ? 'known' : 'est'];
+    const areaM2 = Math.abs(signedArea(outerR));
+    if (!plainB_ && areaM2 > 25 && f.tags['building:part'] === undefined)
+      entrances.push({ ring: outerR, area: areaM2, residential: !/^(industrial|warehouse|commercial|retail|office|church|school|hospital|train_station)$/.test(f.tags.building ?? '') });
     const roofs = roofsB[roofKnown && heightKnown ? 'known' : 'est'];
     const ground = gMin; // Fensterraster beginnt am tiefsten Geländepunkt
 
@@ -246,7 +252,7 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
   }
   const g = (m: MeshBuilder) => (m.empty ? null : m.build());
   const pair = (p: { known: MeshBuilder; est: MeshBuilder }) => ({ known: g(p.known), est: g(p.est) });
-  return { walls: pair(facadesB), plainWalls: pair(plainB), roofs: pair(roofsB), footprints };
+  return { walls: pair(facadesB), plainWalls: pair(plainB), roofs: pair(roofsB), footprints, entrances };
 }
 
 function flatRoof(mb: MeshBuilder, outer: Ring, holes: Ring[], y: number, color: THREE.Color, n: THREE.Vector3) {
@@ -371,7 +377,7 @@ export function buildLines(lines: LineFeature[], hf: HeightField, radius: number
   for (const { l, s } of items) {
     ribbon(mb, l.line, hf, s.width, s.lift, new THREE.Color(s.color), radius);
     if (l.tags.highway || l.tags.railway || l.tags.waterway)
-      for (let i = 0; i < l.line.length - 1; i++) segs.push({ a: l.line[i], b: l.line[i + 1], half: s.width / 2 });
+      for (let i = 0; i < l.line.length - 1; i++) segs.push({ a: l.line[i], b: l.line[i + 1], half: s.width / 2, kind: l.tags.highway ?? (l.tags.railway ? 'rail' : 'water') });
   }
   return { geometry: mb.empty ? null : mb.build(), segments: segs };
 }
@@ -489,7 +495,7 @@ export function paintGround(ctx: CanvasRenderingContext2D, size: number, half: n
 
 // ---------------------------------------------------------------- Bäume
 
-interface RoadSeg { a: Pt; b: Pt; half: number }
+export interface RoadSeg { a: Pt; b: Pt; half: number; /** highway/railway/waterway-Wert */ kind?: string }
 
 class SegGrid {
   cell = 12;

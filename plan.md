@@ -43,6 +43,11 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
   Luftbild an der Gebäudemitte (grünliche Werte = Baumkrone -> Palette).
 - A12 Fassaden: Fensterraster 3 m × 1 Geschoss auf allen Wohn-/Nutzgebäuden; Garagen, Schuppen,
   Scheunen u. Ä. ohne Fenster. Sonnenschatten im Umkreis von 60 m um die Kamera.
+- A13 Uhrzeit gilt in der Zeitzone des Geräts (bei Orten in anderen Zeitzonen weicht sie ab), Datum = heute.
+  Türen: Mitte eines Fensterfelds der Wand, die der nächsten Straße/dem nächsten Weg zugewandt ist.
+  Mülltonnen bei ~60 % der Wohnhäuser (1–3, Farben grau/braun/blau/gelb), Autos parken mit ~45 %
+  Wahrscheinlichkeit je Seite alle ≥ 5,5 m an Wohn-/Nebenstraßen, Parkplätze halb belegt,
+  Laternen alle ~30 m wechselseitig an Wohn- und Hauptstraßen – alles erfunden (Fantasie).
 - A4 Bäume: in Wald-/Gehölzflächen zufällig, aber reproduzierbar verteilt
   (fester Zufallsstartwert aus der Position); Laub-/Nadelbaum aus `leaf_type`.
 - A5 Kollision mit Gebäuden und Baumstämmen (seit 2026-11-10 auf Wunsch); Büsche, Hecken, Zäune bleiben durchlässig.
@@ -73,6 +78,8 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
 Grundstruktur so nah wie möglich an der Wirklichkeit aus allen öffentlichen, rechtlich
 unbedenklichen Quellen; darüber erfundene Details für Immersion; Umschalter Echt ↔ Fantasie.
 Herkunft je Element: Daten / Schätzung / Fantasie.
+- [x] Sonnenstand aus Datum (heute), Uhrzeit (Standard 14:00, Gerätezeitzone) und Ort; Himmel mit Sonne, Schatten danach
+- [x] Türen zur nächsten Straße (Schätzung), Mülltonnen, geparkte Autos, Laternen (Fantasie, mit Kollision nur in Ansicht Fantasie)
 - [x] Umschalter „Echt“ (nur Daten, Schätzungen orange) ↔ „Fantasie“ (mit Fenstern, Bodenstruktur)
 
 ### Phase 2 – Mehr Nähe zur Wirklichkeit (offen)

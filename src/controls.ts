@@ -29,10 +29,7 @@ export class Walker {
     /** Runde Hindernisse (Baumstämme): Mittelpunkt und Radius inkl. Körperbreite */
     posts: { x: number; z: number; r: number }[] = [],
   ) {
-    for (const c of posts) {
-      const k = Math.floor(c.x / 10) + ',' + Math.floor(c.z / 10);
-      (this.posts.get(k) ?? this.posts.set(k, []).get(k)!).push(c);
-    }
+    this.setPosts(posts);
     for (const p of buildings) {
       const b = ringBounds(p.outer);
       for (let i = Math.floor(b.minX / 10); i <= Math.floor(b.maxX / 10); i++)
@@ -104,6 +101,15 @@ export class Walker {
   private turn(dx: number, dy: number) {
     this.yaw -= dx;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy));
+  }
+
+  /** Runde Hindernisse neu setzen (z. B. beim Wechsel Echt/Fantasie). */
+  setPosts(posts: { x: number; z: number; r: number }[]) {
+    this.posts.clear();
+    for (const c of posts) {
+      const k = Math.floor(c.x / 10) + ',' + Math.floor(c.z / 10);
+      (this.posts.get(k) ?? this.posts.set(k, []).get(k)!).push(c);
+    }
   }
 
   blocked(x: number, z: number): boolean {
