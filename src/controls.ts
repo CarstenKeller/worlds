@@ -16,6 +16,7 @@ export class Walker {
   private joy = { id: -1, x0: 0, y0: 0, dx: 0, dy: 0 };
   private look = { id: -1, x: 0, y: 0 };
   private grid = new Map<string, Polygon[]>();
+  private posts = new Map<string, { x: number; z: number; r: number }[]>();
   private disposers: (() => void)[] = [];
   onJoystick?: (active: boolean, x0: number, y0: number, dx: number, dy: number) => void;
 
@@ -25,7 +26,13 @@ export class Walker {
     readonly ground: (x: number, z: number) => number,
     readonly radius: number,
     buildings: Polygon[],
+    /** Runde Hindernisse (Baumstämme): Mittelpunkt und Radius inkl. Körperbreite */
+    posts: { x: number; z: number; r: number }[] = [],
   ) {
+    for (const c of posts) {
+      const k = Math.floor(c.x / 10) + ',' + Math.floor(c.z / 10);
+      (this.posts.get(k) ?? this.posts.set(k, []).get(k)!).push(c);
+    }
     for (const p of buildings) {
       const b = ringBounds(p.outer);
       for (let i = Math.floor(b.minX / 10); i <= Math.floor(b.maxX / 10); i++)
@@ -101,8 +108,15 @@ export class Walker {
 
   blocked(x: number, z: number): boolean {
     if (x * x + z * z > (this.radius - 0.5) ** 2) return true;
-    const l = this.grid.get(Math.floor(x / 10) + ',' + Math.floor(z / 10));
-    return !!l && l.some((p) => pointInPolygon(x, z, p));
+    const gx = Math.floor(x / 10), gz = Math.floor(z / 10);
+    const l = this.grid.get(gx + ',' + gz);
+    if (l && l.some((p) => pointInPolygon(x, z, p))) return true;
+    // Stämme: auch Nachbarzellen prüfen (Radius kann über die Zellgrenze reichen)
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++)
+        for (const c of this.posts.get(gx + i + ',' + (gz + j)) ?? [])
+          if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return true;
+    return false;
   }
 
   setPosition(x: number, z: number) {

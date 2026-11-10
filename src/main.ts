@@ -325,7 +325,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   scene.add(outer);
 
   const camera = new THREE.PerspectiveCamera(70, 1, 0.1, Math.max(2500, p.r * 5));
-  const walker = new Walker(camera, r.domElement, (x, z) => world.heightField.height(x, z), p.r, world.footprints);
+  const walker = new Walker(camera, r.domElement, (x, z) => world.heightField.height(x, z), p.r, world.footprints, world.trunks);
   walker.eyeHeight = p.eye;
   const [sx, sz] = walker.findStart();
   walker.setPosition(sx, sz);

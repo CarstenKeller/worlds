@@ -45,7 +45,7 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
   Scheunen u. Ä. ohne Fenster. Sonnenschatten im Umkreis von 60 m um die Kamera.
 - A4 Bäume: in Wald-/Gehölzflächen zufällig, aber reproduzierbar verteilt
   (fester Zufallsstartwert aus der Position); Laub-/Nadelbaum aus `leaf_type`.
-- A5 Kollision nur mit Gebäuden, nicht mit Bäumen/Zäunen.
+- A5 Kollision mit Gebäuden und Baumstämmen (seit 2026-11-10 auf Wunsch); Büsche, Hecken, Zäune bleiben durchlässig.
 - A6 Steuerung: Desktop WASD/Pfeiltasten + Maus (Pointer-Lock), Umschalt =
   rennen; Mobil: virtueller Joystick links, Wischen zum Umsehen.
 - A7 Sprache Deutsch/Englisch nach Browsersprache (D-06), Darstellung

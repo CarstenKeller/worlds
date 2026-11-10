@@ -36,6 +36,8 @@ export interface World {
   group: THREE.Group;
   heightField: HeightField;
   footprints: Polygon[];
+  /** Baumstämme für die Kollision */
+  trunks: { x: number; z: number; r: number }[];
   /** Bodentextur (Draufsicht) für die Minikarte; deckt [-half, half]² ab */
   groundCanvas: HTMLCanvasElement;
   half: number;
@@ -150,6 +152,8 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     group,
     heightField: hf,
     footprints,
+    // Stammradius wie in buildTrees (0,2 m × Höhe/12) plus ~0,3 m Körperbreite; Büsche bleiben begehbar
+    trunks: trees.filter((t) => !t.bush).map((t) => ({ x: t.x, z: t.z, r: 0.2 * (t.h / 12) + 0.3 })),
     groundCanvas: tex.canvas,
     half,
     stats: {
