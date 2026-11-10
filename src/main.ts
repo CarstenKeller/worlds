@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { lang, t } from './i18n';
 import { ELEVATION_ATTRIBUTION, IMAGERY_SOURCES, OSM_ATTRIBUTION } from './sources';
+import { VT_ATTRIBUTION } from './vectortiles';
 import { createWorld, LoadState, World } from './world';
 import { Walker } from './controls';
 import { icon } from './icons';
@@ -231,7 +232,7 @@ async function start(p: Params, form: HTMLFormElement, setMsg: (t: string | null
     if (!last) return;
     const s = last;
     const sec = Math.round((performance.now() - t0) / 1000);
-    const osmLine = s.osmDone ? t.osmReady : t.osmWaiting(s.osmHost ?? '…');
+    const osmLine = `${t.osmLabel} OpenFreeMap ${t.state[s.vt]} · Overpass ${s.osmDone ? t.state.done : t.osmWaiting(s.osmHost ?? '…')}`;
     stepEl.innerHTML = s.building
       ? escapeAttr(t.stepBuild)
       : [
@@ -240,7 +241,7 @@ async function start(p: Params, form: HTMLFormElement, setMsg: (t: string | null
           osmLine,
           `${sec} s`,
         ].map(escapeAttr).join('<br>');
-    const f = s.building ? 1 : (s.elevation[0] / s.elevation[1] + s.imagery[0] / Math.max(1, s.imagery[1]) + (s.osmDone ? 1 : 0)) / 3;
+    const f = s.building ? 1 : (s.elevation[0] / s.elevation[1] + s.imagery[0] / Math.max(1, s.imagery[1]) + (s.vt !== 'loading' ? 1 : 0)) / 3;
     bar.style.width = `${Math.min(1, f) * 100}%`;
   };
   const tick = setInterval(render, 1000);
@@ -275,17 +276,19 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
       <button class="icon-btn tip-right" type="button" data-act="back" data-tip="${t.back}" aria-label="${t.back}">${icon('back')}</button>
       <div class="hud-panel" data-info></div>
       <span class="spacer"></span>
+      <button class="icon-btn tip-left" type="button" data-act="map" data-tip="${t.minimap}" aria-label="${t.minimap}" aria-pressed="false">${icon('map')}</button>
       <button class="icon-btn tip-left" type="button" data-act="help" data-tip="${t.help}" aria-label="${t.help}" aria-expanded="false">${icon('help')}</button>
     </div>
     <div class="crosshair"></div>
     <div class="center-msg" data-look hidden>${t.clickToLook}</div>
     <div class="center-msg edge-msg" data-edge hidden>${t.edge}</div>
     <div class="joy" hidden><div></div></div>
-    <div class="hud-bottom">
+    <div class="hud-under">
+      <canvas class="minimap" width="480" height="480" hidden aria-label="${t.minimap}"></canvas>
       ${warnings.map((w) => `<p class="warn">${escapeAttr(w)} <span aria-hidden="true">✕</span></p>`).join('')}
       <div class="hud-panel" data-helptext hidden></div>
-      <div class="hud-panel attribution">${[ELEVATION_ATTRIBUTION, OSM_ATTRIBUTION, imageryAttribution].filter(Boolean).join(' · ')} · ${t.stats(world.stats.buildings, world.stats.trees)}</div>
     </div>
+    <div class="attribution">${[ELEVATION_ATTRIBUTION, OSM_ATTRIBUTION, world.stats.osmSource === 'openfreemap' ? VT_ATTRIBUTION : '', imageryAttribution].filter(Boolean).join(' · ')}</div>
   </div>`;
   const view = app.querySelector('.view') as HTMLElement;
   view.prepend(r.domElement);
@@ -321,12 +324,26 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   const helpText = view.querySelector('[data-helptext]') as HTMLElement;
   const joy = view.querySelector('.joy') as HTMLElement;
   const knob = joy.firstElementChild as HTMLElement;
-  helpText.textContent = touch ? t.helpTouch : t.helpDesktop;
-  helpText.hidden = false; // beim Start einmal zeigen
-  setTimeout(() => (helpText.hidden = true), 8000);
+  helpText.textContent = `${touch ? t.helpTouch : t.helpDesktop} · ${t.stats(world.stats.buildings, world.stats.trees)}`
+    + (world.stats.osmSource ? ` · ${t.osmSourceLabel(world.stats.osmSource)}` : '');
+  // Steuerungshinweis beim Start kurz zeigen; er liegt oben und blockiert keine Eingaben
+  helpText.hidden = false;
+  setTimeout(() => { if (helpBtn.getAttribute('aria-expanded') !== 'true') helpText.hidden = true; }, 6000);
   // Warnungen bleiben stehen, bis man sie antippt (vorher nach 12 s weg – wurden übersehen)
-  const warns = Array.from(view.querySelectorAll('.hud-bottom .warn')) as HTMLElement[];
-  warns.forEach((w) => { w.style.pointerEvents = 'auto'; w.title = t.tapToClose; w.onclick = () => w.remove(); });
+  const warns = Array.from(view.querySelectorAll('.hud-under .warn')) as HTMLElement[];
+  warns.forEach((w) => { w.title = t.tapToClose; w.onclick = () => w.remove(); });
+  // Minikarte (Draufsicht, Norden oben) – Wahl bleibt gespeichert
+  const mini = view.querySelector('.minimap') as HTMLCanvasElement;
+  const mapBtn = view.querySelector('[data-act=map]') as HTMLButtonElement;
+  const miniBase = buildMinimapBase(world, mini.width);
+  const setMini = (on: boolean) => {
+    mini.hidden = !on;
+    mapBtn.setAttribute('aria-pressed', String(on));
+    store.set('minimap', on ? '1' : '0');
+  };
+  setMini(store.get('minimap') === '1');
+  mapBtn.onclick = () => setMini(mini.hidden !== false);
+  mini.onclick = () => setMini(false);
   look.hidden = touch;
   const helpBtn = view.querySelector('[data-act=help]') as HTMLButtonElement;
   helpBtn.onclick = () => {
@@ -368,6 +385,7 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
       info.textContent = t.hud(world.heightField.height(pos.x, pos.z), d, t.dirs[Math.round(heading / 45) % 8]);
       edge.hidden = d < p.r - 4;
     }
+    if (!mini.hidden) drawMinimap(mini, miniBase, world.half, camera.position.x, camera.position.z, walker.yaw);
     r.render(scene, camera);
   });
 
@@ -384,6 +402,63 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   };
   // Für automatische Tests/Fehlersuche erreichbar
   (window as unknown as { __worlds: unknown }).__worlds = { world, walker, camera, scene };
+}
+
+/** Grundbild der Minikarte: Bodentextur verkleinert, Gebäude dunkel, Kreis als Weltgrenze. */
+function buildMinimapBase(world: World, size: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  g.drawImage(world.groundCanvas, 0, 0, size, size);
+  const s = size / (2 * world.half);
+  g.fillStyle = 'rgba(40,40,45,0.85)';
+  for (const f of world.footprints) {
+    g.beginPath();
+    for (const ring of [f.outer, ...f.holes]) {
+      ring.forEach(([x, z], i) => (i ? g.lineTo : g.moveTo).call(g, (x + world.half) * s, (z + world.half) * s));
+      g.closePath();
+    }
+    g.fill('evenodd');
+  }
+  return c;
+}
+
+function drawMinimap(c: HTMLCanvasElement, base: HTMLCanvasElement, half: number, x: number, z: number, yaw: number) {
+  const g = c.getContext('2d')!;
+  const n = c.width, s = n / (2 * half);
+  g.clearRect(0, 0, n, n);
+  g.save();
+  g.beginPath();
+  g.arc(n / 2, n / 2, n / 2 - 2, 0, Math.PI * 2);
+  g.clip();
+  g.drawImage(base, 0, 0);
+  g.restore();
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(255,255,255,0.9)';
+  g.beginPath();
+  g.arc(n / 2, n / 2, n / 2 - 2, 0, Math.PI * 2);
+  g.stroke();
+  // Spieler als Pfeil in Blickrichtung (yaw=0 -> Norden = oben)
+  const px = (x + half) * s, pz = (z + half) * s;
+  g.save();
+  g.translate(px, pz);
+  g.rotate(-yaw);
+  g.beginPath();
+  g.moveTo(0, -18);
+  g.lineTo(11, 12);
+  g.lineTo(0, 6);
+  g.lineTo(-11, 12);
+  g.closePath();
+  g.fillStyle = '#ff5a36';
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 3;
+  g.fill();
+  g.stroke();
+  g.restore();
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 26px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.fillText('N', n / 2, 30);
 }
 
 showSetup();

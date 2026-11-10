@@ -125,6 +125,8 @@ input[type='range'] { padding: 0; min-height: 48px; background: transparent; bor
 }
 .icon-btn:hover { border-color: var(--primary); }
 .icon-btn svg, .primary svg { width: 24px; height: 24px; fill: currentColor; }
+/* Tooltips nur bei echtem Hover (Maus); auf Touch bliebe er nach dem Antippen stehen */
+@media (hover: hover) {
 .icon-btn[data-tip]:hover::after, .icon-btn[data-tip]:focus-visible::after {
   content: attr(data-tip);
   position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
@@ -134,6 +136,7 @@ input[type='range'] { padding: 0; min-height: 48px; background: transparent; bor
 .icon-btn.tip-left[data-tip]:hover::after, .icon-btn.tip-left[data-tip]:focus-visible::after { left: auto; right: 0; transform: none; }
 .icon-btn.tip-right[data-tip]:hover::after, .icon-btn.tip-right[data-tip]:focus-visible::after { left: 0; transform: none; }
 
+}
 .menu {
   position: absolute; right: 16px; top: 64px; z-index: 20;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
@@ -161,13 +164,27 @@ input[type='range'] { padding: 0; min-height: 48px; background: transparent; bor
   background: var(--hud-bg); color: var(--text); backdrop-filter: blur(6px);
   border-radius: 12px; padding: 8px 12px; font-size: 0.85rem; max-width: min(520px, calc(100vw - 140px));
 }
+.hud-under {
+  position: absolute; left: 0; right: 0; top: calc(max(12px, env(safe-area-inset-top)) + 58px);
+  display: grid; gap: 8px; justify-items: center; padding: 0 12px; pointer-events: none;
+}
+.hud-under .warn { pointer-events: auto; cursor: pointer; max-width: min(520px, 100%); }
+.hud-under .hud-panel { pointer-events: none; text-align: center; }
+.minimap {
+  width: min(46vw, 220px); height: auto; aspect-ratio: 1; border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35); pointer-events: auto; cursor: pointer;
+}
+.attribution {
+  position: absolute; right: max(6px, env(safe-area-inset-right)); bottom: max(4px, env(safe-area-inset-bottom));
+  max-width: 70vw; text-align: right; font-size: 10px; line-height: 1.25; color: rgba(255,255,255,0.92);
+  text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none;
+}
 .hud-bottom {
   position: absolute; left: 0; right: 0; bottom: 0;
   padding: 0 max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   display: grid; gap: 6px; justify-items: start; pointer-events: none;
 }
 .hud-bottom .hud-panel { pointer-events: auto; }
-.attribution { font-size: 0.72rem; opacity: 0.9; }
 .center-msg {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   background: var(--hud-bg); color: var(--text); padding: 10px 16px; border-radius: 999px; pointer-events: none;

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { LocalFrame, LatLon, chooseZoom, tileXToLon, tileYToLat } from './geo';
 import { HeightField, buildHeightField, loadElevation } from './terrain';
 import { OsmData, fetchOsm, parseOsm } from './osm';
+import { loadVectorOsm } from './vectortiles';
 import { ImagerySource, loadImage, pool, tileUrl } from './sources';
 import {
   buildBarriers, buildBuildings, buildLines, buildTrees, buildWater, carveWater, paintGround, placeTrees,
@@ -25,6 +26,7 @@ export interface WorldStats {
   failedImageryTiles: number;
   failedElevationTiles: number;
   osmError: string | null;
+  osmSource: 'overpass' | 'openfreemap' | null;
   minHeight: number;
   maxHeight: number;
 }
@@ -33,6 +35,9 @@ export interface World {
   group: THREE.Group;
   heightField: HeightField;
   footprints: Polygon[];
+  /** Bodentextur (Draufsicht) für die Minikarte; deckt [-half, half]² ab */
+  groundCanvas: HTMLCanvasElement;
+  half: number;
   stats: WorldStats;
   dispose(): void;
 }
@@ -41,7 +46,8 @@ export interface LoadState {
   elevation: [number, number]; // geladen, gesamt
   imagery: [number, number];
   osmHost: string | null; // gerade angefragter Overpass-Server
-  osmDone: boolean;
+  osmDone: boolean; // Overpass fertig (Erfolg oder aufgegeben)
+  vt: 'loading' | 'ok' | 'error'; // OpenFreeMap-Vektorkacheln
   building: boolean;
 }
 export type Progress = (s: LoadState) => void;
@@ -53,21 +59,15 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   const seed = seedFrom(o.center.lat, o.center.lon);
 
   // Alle drei Quellen gleichzeitig laden; Fortschritt je Quelle melden
-  const st: LoadState = { elevation: [0, 1], imagery: [0, 1], osmHost: null, osmDone: false, building: false };
+  const st: LoadState = { elevation: [0, 1], imagery: [0, 1], osmHost: null, osmDone: false, vt: 'loading', building: false };
   const report = () => progress({ ...st });
   report();
   const elevP = loadElevation(frame, half, (d, t) => { st.elevation = [d, t]; report(); }, signal);
-  let osmError: string | null = null;
-  const osmP: Promise<OsmData> = fetchOsm(o.center, o.radius * 1.05, signal, (h) => { st.osmHost = h; report(); })
-    .then((els) => parseOsm(frame, els))
-    .catch((e) => {
-      if ((e as Error).name === 'AbortError') throw e;
-      osmError = String((e as Error).message ?? e);
-      return { buildings: [], areas: [], lines: [], points: [] } as OsmData;
-    })
-    .finally(() => { st.osmDone = true; report(); });
+  const osmP = loadOsmData(frame, o, st, report, signal);
   const texP = loadImageryCanvas(frame, half, o, (d, t) => { st.imagery = [d, t]; report(); }, signal);
-  const [elev, osm, tex] = await Promise.all([elevP, osmP, texP]);
+  const [elev, osmRes, tex] = await Promise.all([elevP, osmP, texP]);
+  const osm = osmRes.data;
+  const osmError = osmRes.error;
   const hf = buildHeightField(frame, half, elev.sample);
   // Gelände unter Seen ebnen, bevor Mesh und alles Andere darauf aufbauen
   const waters = carveWater(osm.areas, hf);
@@ -130,6 +130,8 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     group,
     heightField: hf,
     footprints,
+    groundCanvas: tex.canvas,
+    half,
     stats: {
       buildings: buildingsToDraw.length,
       trees: trees.length,
@@ -139,6 +141,7 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
       failedImageryTiles: tex.failed,
       failedElevationTiles: elev.failed,
       osmError,
+      osmSource: osmRes.source,
       minHeight: minH,
       maxHeight: maxH,
     },
@@ -154,6 +157,54 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
       });
     },
   };
+}
+
+const EMPTY = (): OsmData => ({ buildings: [], areas: [], lines: [], points: [] });
+/** Wartezeit auf Overpass, wenn die Vektorkacheln schon da sind. */
+export const OVERPASS_BUDGET_MS = 30000;
+
+/**
+ * OSM-Daten aus zwei Quellen: OpenFreeMap-Vektorkacheln (schnell, weniger Details) und
+ * Overpass (alle Details, aber die öffentlichen Server sind oft überlastet).
+ * Overpass gewinnt, wenn es innerhalb des Zeitbudgets antwortet; sonst gelten die Vektorkacheln.
+ */
+async function loadOsmData(
+  frame: LocalFrame, o: WorldOptions, st: LoadState, report: () => void, signal?: AbortSignal,
+): Promise<{ data: OsmData; source: 'overpass' | 'openfreemap' | null; error: string | null }> {
+  const t0 = performance.now();
+  const ovCtl = new AbortController();
+  const stopOv = () => ovCtl.abort();
+  signal?.addEventListener('abort', stopOv, { once: true });
+  let ovError: string | null = null;
+  const ovP = fetchOsm(o.center, o.radius * 1.05, ovCtl.signal, (h) => { st.osmHost = h; report(); }, 25000)
+    .then((els) => parseOsm(frame, els))
+    .catch((e) => { ovError = String((e as Error).message ?? e); return null; })
+    .finally(() => { st.osmDone = true; report(); });
+  let vtError: string | null = null;
+  const vt = await loadVectorOsm(o.center, o.radius * 1.05, signal)
+    .catch((e) => {
+      if (signal?.aborted) throw e;
+      vtError = String((e as Error).message ?? e);
+      return null;
+    });
+  st.vt = vt ? 'ok' : 'error';
+  report();
+  try {
+    if (vt) {
+      const left = OVERPASS_BUDGET_MS - (performance.now() - t0);
+      const ov = await Promise.race([ovP, new Promise<null>((r) => setTimeout(() => r(null), Math.max(0, left)))]);
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      if (ov) return { data: ov, source: 'overpass', error: null };
+      ovCtl.abort();
+      return { data: vt, source: 'openfreemap', error: null };
+    }
+    const ov = await ovP;
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    if (ov) return { data: ov, source: 'overpass', error: null };
+    return { data: EMPTY(), source: null, error: `OpenFreeMap: ${vtError}; Overpass: ${ovError}` };
+  } finally {
+    signal?.removeEventListener('abort', stopOv);
+  }
 }
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
