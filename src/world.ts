@@ -10,6 +10,8 @@ import {
 } from './builders';
 import { Polygon, pointInPolygon, ringBounds, seedFrom } from './util';
 
+export type ViewMode = 'fantasy' | 'real';
+
 export interface WorldOptions {
   center: LatLon;
   radius: number;
@@ -38,6 +40,8 @@ export interface World {
   footprints: Polygon[];
   /** Baumstämme für die Kollision */
   trunks: { x: number; z: number; r: number }[];
+  /** Ansicht umschalten (A-01): "fantasy" = alles, "real" = ohne Erfundenes, Schätzungen orange */
+  setMode(mode: ViewMode): void;
   /** Bodentextur (Draufsicht) für die Minikarte; deckt [-half, half]² ab */
   groundCanvas: HTMLCanvasElement;
   half: number;
@@ -94,7 +98,7 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   const detail = detailTexture();
   const terrainMat = new THREE.MeshLambertMaterial({ map: texture });
-  addDetail(terrainMat, detail, 0.35, 0.45, 70);
+  const detailSwitches = [addDetail(terrainMat, detail, 0.35, 0.45, 70)];
   const terrain = new THREE.Mesh(terrainGeo, terrainMat);
   terrain.receiveShadow = true;
   terrain.name = 'terrain';
@@ -120,15 +124,29 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
   };
-  if (b.walls) solid(b.walls, mat({ map: facadeTexture() }));
-  if (b.plainWalls) solid(b.plainWalls, mat());
-  if (b.roofs) solid(b.roofs, mat());
+  // Ebenen (A-01): geschätzte Teile merken (Ansicht "Echt" färbt sie), Fantasie-Materialien merken
+  const estMats: THREE.MeshLambertMaterial[] = [];
+  const facadeMats: THREE.MeshLambertMaterial[] = [];
+  const facadeTex = facadeTexture();
+  const add = (g: THREE.BufferGeometry | null, est: boolean, facade: boolean) => {
+    if (!g) return;
+    const m = mat(facade ? { map: facadeTex } : {});
+    if (est) estMats.push(m);
+    if (facade) facadeMats.push(m);
+    solid(g, m);
+  };
+  add(b.walls.known, false, true);
+  add(b.walls.est, true, true);
+  add(b.plainWalls.known, false, false);
+  add(b.plainWalls.est, true, false);
+  add(b.roofs.known, false, false);
+  add(b.roofs.est, true, false);
   await nextFrame();
 
   const lines = buildLines(osm.lines, hf, o.radius);
   if (lines.geometry) {
     const roadMat = mat({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-    addDetail(roadMat, detail, 0.6, 0.55, 50);
+    detailSwitches.push(addDetail(roadMat, detail, 0.6, 0.55, 50));
     const roads = new THREE.Mesh(lines.geometry, roadMat);
     roads.receiveShadow = true;
     group.add(roads);
@@ -141,9 +159,28 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
   await nextFrame();
 
   const trees = placeTrees(osm, o.radius, lines.segments, footprints, seed);
-  const treeGroup = buildTrees(trees, hf, seed);
-  treeGroup.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
-  group.add(treeGroup);
+  for (const est of [false, true]) {
+    const tg = buildTrees(trees.filter((t) => !!t.est === est), hf, seed + (est ? 1 : 0));
+    tg.traverse((o) => {
+      o.castShadow = o.receiveShadow = true;
+      const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined;
+      if (est && m && !estMats.includes(m)) estMats.push(m);
+    });
+    group.add(tg);
+  }
+  const baseColors = estMats.map((m) => m.color.clone());
+  const ESTIMATE_TINT = new THREE.Color('#ff8a3d');
+  const setMode = (mode: ViewMode) => {
+    const fantasy = mode === 'fantasy';
+    for (const m of facadeMats) { m.map = fantasy ? facadeTex : null; m.needsUpdate = true; }
+    for (const d of detailSwitches) d.value = fantasy ? 1 : 0;
+    // Leuchtendes Orange über Eigenleuchten, damit es auch auf dunklen Flächen deutlich ist
+    estMats.forEach((m, i) => {
+      m.color.copy(baseColors[i]);
+      if (fantasy) m.emissive.setRGB(0, 0, 0);
+      else { m.color.multiplyScalar(0.55); m.emissive.copy(ESTIMATE_TINT).multiplyScalar(0.45); }
+    });
+  };
 
   let minH = Infinity, maxH = -Infinity;
   for (const h of hf.h) { if (h < minH) minH = h; if (h > maxH) maxH = h; }
@@ -155,6 +192,7 @@ export async function createWorld(o: WorldOptions, progress: Progress, signal?: 
     // Stammradius wie in buildTrees (0,2 m × Höhe/12) plus ~0,3 m Körperbreite; Büsche bleiben begehbar
     trunks: trees.filter((t) => !t.bush).map((t) => ({ x: t.x, z: t.z, r: 0.2 * (t.h / 12) + 0.3 })),
     groundCanvas: tex.canvas,
+    setMode,
     half,
     stats: {
       buildings: buildingsToDraw.length,

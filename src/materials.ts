@@ -79,26 +79,30 @@ export function detailTexture(): THREE.Texture {
  * Feinstruktur in ein Lambert-Material einmischen: Rauschen in Weltkoordinaten (scale = Wiederholungen
  * je Meter), nur in der Nähe (verblasst bis fadeDist), damit es in der Ferne nicht flimmert.
  */
-export function addDetail(m: THREE.MeshLambertMaterial, tex: THREE.Texture, scale: number, strength: number, fadeDist = 60) {
+export function addDetail(m: THREE.MeshLambertMaterial, tex: THREE.Texture, scale: number, strength: number, fadeDist = 60): { value: number } {
+  // Schalter (A-01: Feinstruktur ist erfunden) – 0 = aus, 1 = an
+  const on = { value: 1 };
   m.onBeforeCompile = (shader) => {
     shader.uniforms.detailMap = { value: tex };
+    shader.uniforms.detailOn = on;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vDetailPos;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetailPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D detailMap;\nvarying vec3 vDetailPos;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D detailMap;\nuniform float detailOn;\nvarying vec3 vDetailPos;')
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
         {
           float d1 = texture2D(detailMap, vDetailPos.xz * ${scale.toFixed(4)}).r;
           float d2 = texture2D(detailMap, vDetailPos.xz * ${(scale * 0.137).toFixed(4)}).r;
-          float k = ${strength.toFixed(3)} * (1.0 - smoothstep(${(fadeDist * 0.3).toFixed(1)}, ${fadeDist.toFixed(1)}, length(vViewPosition)));
+          float k = detailOn * ${strength.toFixed(3)} * (1.0 - smoothstep(${(fadeDist * 0.3).toFixed(1)}, ${fadeDist.toFixed(1)}, length(vViewPosition)));
           diffuseColor.rgb *= mix(1.0, (d1 * 0.65 + d2 * 0.35) * 2.0, k);
         }`,
       );
   };
   m.customProgramCacheKey = () => `detail-${scale}-${strength}-${fadeDist}`;
+  return on;
 }
 
 /** Bodentextur im Speicher verkleinert lesen und daraus Dachfarben ableiten. */

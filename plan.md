@@ -69,6 +69,12 @@ statt APK. Die Designentscheidungen (D-xx) werden sinngemäß aufs Web
 - [x] Realismus 1: geschätzte Dächer, Dachfarbe aus Luftbild, Fensterfassaden, Feinstruktur Boden/Straßen, Sonnenschatten
 - implementiert, nur mit Testdaten im Headless-Browser geprüft – **nicht** mit echten Overpass-/Bildkacheln (in der Entwicklungs-Sandbox gesperrt) und nicht auf echtem Gerät
 
+### Leitbild (A-01, 2026-11-10)
+Grundstruktur so nah wie möglich an der Wirklichkeit aus allen öffentlichen, rechtlich
+unbedenklichen Quellen; darüber erfundene Details für Immersion; Umschalter Echt ↔ Fantasie.
+Herkunft je Element: Daten / Schätzung / Fantasie.
+- [x] Umschalter „Echt“ (nur Daten, Schätzungen orange) ↔ „Fantasie“ (mit Fenstern, Bodenstruktur)
+
 ### Phase 2 – Mehr Nähe zur Wirklichkeit (offen)
 - [ ] Dachformen für beliebige Grundrisse, Dachform schätzen, wenn OSM nichts angibt
 - [ ] Genaueres Gelände (z. B. offene DGM1-Daten der Bundesländer, wo per CORS abrufbar – zu prüfen)

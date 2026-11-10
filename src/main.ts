@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { lang, t } from './i18n';
 import { ELEVATION_ATTRIBUTION, IMAGERY_SOURCES, OSM_ATTRIBUTION } from './sources';
 import { VT_ATTRIBUTION } from './vectortiles';
-import { createWorld, LoadState, World } from './world';
+import { createWorld, LoadState, ViewMode, World } from './world';
 import { Walker } from './controls';
 import { icon } from './icons';
 
@@ -276,8 +276,8 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
   <div class="view">
     <div class="hud-top">
       <button class="icon-btn tip-right" type="button" data-act="back" data-tip="${t.back}" aria-label="${t.back}">${icon('back')}</button>
-      <div class="hud-panel" data-info></div>
       <span class="spacer"></span>
+      <button class="icon-btn tip-left" type="button" data-act="layer" aria-pressed="false">${icon('layers')}</button>
       <button class="icon-btn tip-left" type="button" data-act="map" data-tip="${t.minimap}" aria-label="${t.minimap}" aria-pressed="false">${icon('map')}</button>
       <button class="icon-btn tip-left" type="button" data-act="help" data-tip="${t.help}" aria-label="${t.help}" aria-expanded="false">${icon('help')}</button>
     </div>
@@ -286,6 +286,8 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     <div class="center-msg edge-msg" data-edge hidden>${t.edge}</div>
     <div class="joy" hidden><div></div></div>
     <div class="hud-under">
+      <div class="hud-panel" data-info></div>
+      <div class="hud-panel legend" data-legend hidden>${t.legendReal}</div>
       <canvas class="minimap" width="480" height="480" hidden aria-label="${t.minimap}"></canvas>
       ${warnings.map((w) => `<p class="warn">${escapeAttr(w)} <span aria-hidden="true">✕</span></p>`).join('')}
       <div class="hud-panel" data-helptext hidden></div>
@@ -355,6 +357,21 @@ function showWorld(world: World, p: Params, imageryAttribution: string, warnings
     store.set('minimap', on ? '1' : '0');
   };
   setMini(store.get('minimap') === '1');
+  // Ansicht Echt/Fantasie (A-01)
+  const layerBtn = view.querySelector('[data-act=layer]') as HTMLButtonElement;
+  const legend = view.querySelector('[data-legend]') as HTMLElement;
+  const setView = (mode: ViewMode) => {
+    world.setMode(mode);
+    const real = mode === 'real';
+    layerBtn.setAttribute('aria-pressed', String(real));
+    // Tooltip nennt, wohin der Knopf umschaltet
+    layerBtn.dataset.tip = real ? t.toFantasy : t.toReal;
+    layerBtn.setAttribute('aria-label', layerBtn.dataset.tip);
+    legend.hidden = !real;
+    store.set('view', mode);
+  };
+  setView(store.get('view') === 'real' ? 'real' : 'fantasy');
+  layerBtn.onclick = () => setView(layerBtn.getAttribute('aria-pressed') === 'true' ? 'fantasy' : 'real');
   mapBtn.onclick = () => setMini(mini.hidden !== false);
   mini.onclick = () => setMini(false);
   look.hidden = touch;

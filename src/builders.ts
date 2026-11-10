@@ -154,9 +154,11 @@ export function guessRoof(tags: Record<string, string>, ring: Ring, height: numb
 export type ColorSampler = (x: number, z: number) => THREE.Color | null;
 
 export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: number, seed: number, roofColorAt?: ColorSampler) {
-  const facades = new MeshBuilder(); // Wände mit Fensterraster (Textur)
-  const plain = new MeshBuilder(); // Wände ohne Fenster
-  const roofs = new MeshBuilder();
+  // Herkunft (A-01): "known" = Angabe aus den Daten, "est" = geschätzt
+  const mk = () => ({ known: new MeshBuilder(), est: new MeshBuilder() });
+  const facadesB = mk(); // Wände mit Fensterraster (Textur)
+  const plainB = mk(); // Wände ohne Fenster
+  const roofsB = mk();
   const rand = rng(seed ^ 0xb11d);
   const footprints: Polygon[] = [];
   const up = V(0, 1, 0);
@@ -202,7 +204,10 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
       new THREE.Color((sloped ? ROOF_SLOPED : ROOF_FLAT)[Math.floor(rand() * (sloped ? ROOF_SLOPED.length : ROOF_FLAT.length))]),
     );
     if (!isRoofOnly && f.tags.building !== 'carport') footprints.push({ outer: outerR, holes });
-    const walls = plainBuilding(f.tags, height) ? plain : facades;
+    const heightKnown = !!(f.tags.height || f.tags['building:levels']);
+    const roofKnown = !!f.tags['roof:shape'] || isRoofOnly;
+    const walls = (plainBuilding(f.tags, height) ? plainB : facadesB)[heightKnown ? 'known' : 'est'];
+    const roofs = roofsB[roofKnown && heightKnown ? 'known' : 'est'];
     const ground = gMin; // Fensterraster beginnt am tiefsten Geländepunkt
 
     const wallRing = (ring: Ring, top: number) => {
@@ -240,7 +245,8 @@ export function buildBuildings(list: AreaFeature[], hf: HeightField, radius: num
     }
   }
   const g = (m: MeshBuilder) => (m.empty ? null : m.build());
-  return { walls: g(facades), plainWalls: g(plain), roofs: g(roofs), footprints };
+  const pair = (p: { known: MeshBuilder; est: MeshBuilder }) => ({ known: g(p.known), est: g(p.est) });
+  return { walls: pair(facadesB), plainWalls: pair(plainB), roofs: pair(roofsB), footprints };
 }
 
 function flatRoof(mb: MeshBuilder, outer: Ring, holes: Ring[], y: number, color: THREE.Color, n: THREE.Vector3) {
@@ -513,7 +519,7 @@ class SegGrid {
   }
 }
 
-export interface TreeInstance { x: number; z: number; h: number; conifer: boolean; bush?: boolean }
+export interface TreeInstance { x: number; z: number; h: number; conifer: boolean; bush?: boolean; /** Standort geschätzt (A-01) */ est?: boolean }
 
 export function placeTrees(osm: OsmData, radius: number, segments: RoadSeg[], footprints: Polygon[], seed: number, maxTrees = 25000): TreeInstance[] {
   const rand = rng(seed ^ 0x7ee5);
@@ -564,18 +570,18 @@ export function placeTrees(osm: OsmData, radius: number, segments: RoadSeg[], fo
         const jit = j.orchard ? 0.1 : 0.9;
         const px = x + (rand() - 0.5) * sp * jit, pz = z + (rand() - 0.5) * sp * jit;
         if (!pointInPolygon(px, pz, j.f.poly) || !ok(px, pz)) continue;
-        if (j.bush) trees.push({ x: px, z: pz, h: 1 + rand() * 2.5, conifer: false, bush: true });
-        else if (j.orchard) trees.push({ x: px, z: pz, h: 4 + rand() * 3, conifer: false });
+        if (j.bush) trees.push({ x: px, z: pz, h: 1 + rand() * 2.5, conifer: false, bush: true, est: true });
+        else if (j.orchard) trees.push({ x: px, z: pz, h: 4 + rand() * 3, conifer: false, est: true });
         else {
           const conifer = kind(j.f.tags);
-          trees.push({ x: px, z: pz, h: conifer ? 15 + rand() * 15 : 12 + rand() * 14, conifer });
+          trees.push({ x: px, z: pz, h: conifer ? 15 + rand() * 15 : 12 + rand() * 14, conifer, est: true });
         }
       }
   }
   // Baumreihen
   for (const l of osm.lines) {
     if (l.tags.natural !== 'tree_row') continue;
-    for (const [x, z] of densify(l.line, 7)) if (ok(x, z)) trees.push({ x, z, h: parseMeters(l.tags.height) ?? 8 + rand() * 8, conifer: l.tags.leaf_type === 'needleleaved' });
+    for (const [x, z] of densify(l.line, 7)) if (ok(x, z)) trees.push({ x, z, h: parseMeters(l.tags.height) ?? 8 + rand() * 8, conifer: l.tags.leaf_type === 'needleleaved', est: true });
   }
   // Einzelbäume (nicht gegen Wege prüfen: OSM-Position gilt)
   for (const p of osm.points) {

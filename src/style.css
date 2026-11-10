@@ -206,3 +206,5 @@ input[type='range'] { padding: 0; min-height: 48px; background: transparent; bor
 .hud-bottom .warn { cursor: pointer; }
 
 [data-info] { white-space: nowrap; font-size: 0.8rem; padding: 6px 10px; align-self: center; }
+
+.legend { border-left: 4px solid #ff8a3d; }
